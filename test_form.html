@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>API Test Form - Update</title>
+    <style>
+        body { font-family: sans-serif; max-width: 600px; margin: 40px auto; padding: 20px; border: 1px solid #ccc; border-radius: 8px; }
+        .form-group { margin-bottom: 15px; }
+        label { display: block; margin-bottom: 5px; font-weight: bold;}
+        input, select, button { width: 100%; padding: 10px; font-size: 16px; box-sizing: border-box; }
+        button { background-color: #ffc107; color: black; border: none; cursor: pointer; }
+    </style>
+</head>
+<body>
+    <h2>Test: Update a Service</h2>
+    <p><strong>Important:</strong> You must be logged in as an admin in another tab.</p>
+    <p>To get existing data, visit <a href="api/get_services.php" target="_blank">get_services.php</a>, find an ID, then fill out the form below.</p>
+
+    <form action="api/update_service.php" method="POST">
+        <div class="form-group">
+            <label for="service_id">Service ID to Update:</label>
+            <input type="number" name="service_id" id="service_id" required>
+        </div>
+         <div class="form-group">
+            <label for="service_name">New Service Name:</label>
+            <input type="text" name="service_name" id="service_name" required>
+        </div>
+        <div class="form-group">
+            <label for="section">New Section:</label>
+            <select name="section" id="section" required>
+                <option value="">Select Section</option>
+                <option value="Massage">Massage</option>
+                <option value="Hair Barbering">Hair Barbering</option>
+                <option value="Hair Salon">Hair Salon</option>
+            </select>
+        </div>
+        <div class="form-group">
+            <label for="price">New Price (GHS):</label>
+            <input type="number" name="price" id="price" step="0.01" required>
+        </div>
+        <div class="form-group">
+            <label for="duration">New Duration:</label>
+            <input type="text" name="duration" id="duration">
+        </div>
+        <button type="submit">Update Service via API</button>
+    </form>
+</body>
+</html>

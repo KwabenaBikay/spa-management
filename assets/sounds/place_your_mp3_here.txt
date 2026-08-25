@@ -1,0 +1,2 @@
+To play a custom notification sound, place an MP3 file named "notification.mp3" in this directory.
+If the file is not here, the dashboards will automatically fall back to playing a synthesized chime.
