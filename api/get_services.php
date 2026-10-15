@@ -1,10 +1,9 @@
-﻿<?php
-header("Access-Control-Allow-Origin: *"); // <-- ADD THIS LINE
-
+<?php
 // Our first API endpoint to get all services
 
 // Start session to check for authentication
-session_start();
+require_once __DIR__ . '/../includes/session.php';
+check_api_rate_limit(60, 60);
 
 // Set the content type header to JSON. This tells the browser to expect JSON data.
 header('Content-Type: application/json');
@@ -29,7 +28,7 @@ $result = $conn->query($query);
 // Check if the query was successful
 if (!$result) {
     http_response_code(500); // Internal Server Error
-    echo json_encode(['error' => 'Database query failed: ' . $conn->error]);
+    echo json_encode(['error' => 'Database query failed.']);
     exit;
 }
 

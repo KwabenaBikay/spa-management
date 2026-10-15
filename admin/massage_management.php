@@ -1,37 +1,61 @@
 <?php
-session_start();
+require_once __DIR__ . '/../includes/session.php';
 include '../db.php';
 
 // Restrict access to admin and supervisor
 if (!isset($_SESSION['user']) || !in_array($_SESSION['user']['role'], ['admin', 'supervisor'])) {
-    header("Location: ../login.php");
+    header("Location: login.php");
     exit;
 }
 
+$user_role = $_SESSION['user']['role'];
+$massage_categories = ['Full Body Massage', 'Express Massage'];
+
 // Add new massage type
 if (isset($_POST['add_massage'])) {
-    $name = trim($_POST['name']);
+    $name = trim($_POST['name'] ?? '');
     $price_60 = !empty($_POST['price_60']) ? (float)$_POST['price_60'] : 0.0;
     $price_90 = !empty($_POST['price_90']) ? (float)$_POST['price_90'] : 0.0;
     $price_120 = !empty($_POST['price_120']) ? (float)$_POST['price_120'] : 0.0;
-    $category = trim($_POST['category']);
-    
+    $category = trim($_POST['category'] ?? '');
+
+    if ($name === '' || !in_array($category, $massage_categories, true)) {
+        $_SESSION['error'] = 'Please enter a name and choose Full Body or Express.';
+        $fallback = trim((string)($_GET['category'] ?? 'Full Body Massage'));
+        if (!in_array($fallback, $massage_categories, true)) {
+            $fallback = 'Full Body Massage';
+        }
+        header('Location: massage_management.php?category=' . urlencode($fallback));
+        exit;
+    }
+
     $insert_massage = "INSERT INTO massage_types (name, price_60, price_90, price_120, category) VALUES (?, ?, ?, ?, ?)";
     $stmt = $conn->prepare($insert_massage);
     $stmt->bind_param("sddds", $name, $price_60, $price_90, $price_120, $category);
-    
+
     if ($stmt->execute()) {
         $_SESSION['message'] = "Massage type cataloged successfully.";
     } else {
         $_SESSION['error'] = "System error: Unable to add massage type.";
     }
-    header("Location: massage_management.php");
+    header('Location: massage_management.php?category=' . urlencode($category));
     exit;
 }
 
 // Delete massage type
 if (isset($_POST['delete_massage'])) {
-    $id = $_POST['massage_id'];
+    $id = (int)$_POST['massage_id'];
+    $return_category = trim((string)($_POST['return_category'] ?? ''));
+    if (!in_array($return_category, $massage_categories, true)) {
+        $lookup = $conn->prepare("SELECT category FROM massage_types WHERE id = ?");
+        $lookup->bind_param("i", $id);
+        $lookup->execute();
+        $cat_row = $lookup->get_result()->fetch_assoc();
+        $return_category = (string)($cat_row['category'] ?? 'Full Body Massage');
+    }
+    if (!in_array($return_category, $massage_categories, true)) {
+        $return_category = 'Full Body Massage';
+    }
     $stmt = $conn->prepare("DELETE FROM massage_types WHERE id = ?");
     $stmt->bind_param("i", $id);
     if ($stmt->execute()) {
@@ -39,22 +63,35 @@ if (isset($_POST['delete_massage'])) {
     } else {
         $_SESSION['error'] = "System error: Unable to delete massage type.";
     }
-    header("Location: massage_management.php");
+    header('Location: massage_management.php?category=' . urlencode($return_category));
     exit;
 }
 
-// Pagination variables
-$limit = 7;
-$page = isset($_GET['page']) ? max(1, (int)$_GET['page']) : 1;
-$offset = ($page - 1) * $limit;
+$category_view = trim((string)($_GET['category'] ?? 'Full Body Massage'));
+if (!in_array($category_view, $massage_categories, true)) {
+    $category_view = 'Full Body Massage';
+}
 
-// Fetch total records
-$total_result = $conn->query("SELECT COUNT(*) as total FROM massage_types");
-$total_row = $total_result->fetch_assoc();
-$total_records = $total_row['total'];
-$total_pages = ceil($total_records / $limit);
+$counts = ['Full Body Massage' => 0, 'Express Massage' => 0];
+if ($count_rs = $conn->query("SELECT category, COUNT(*) AS c FROM massage_types GROUP BY category")) {
+    while ($row = $count_rs->fetch_assoc()) {
+        $cat = (string)($row['category'] ?? '');
+        if (isset($counts[$cat])) {
+            $counts[$cat] = (int)$row['c'];
+        }
+    }
+}
 
-$massage_result = $conn->query("SELECT * FROM massage_types ORDER BY name LIMIT $limit OFFSET $offset");
+$massage_rows = [];
+$stmt = $conn->prepare("SELECT * FROM massage_types WHERE category = ? ORDER BY name");
+$stmt->bind_param('s', $category_view);
+$stmt->execute();
+$result = $stmt->get_result();
+if ($result) {
+    while ($row = $result->fetch_assoc()) {
+        $massage_rows[] = $row;
+    }
+}
 
 $message = $_SESSION['message'] ?? '';
 $error = $_SESSION['error'] ?? '';
@@ -430,11 +467,12 @@ unset($_SESSION['message'], $_SESSION['error']);
             }
         }
 
-        /* Pagination styles */
-        .pagination { display: flex; justify-content: center; gap: 8px; margin-top: 25px; }
-        .pagination-link { padding: 8px 14px; border: 1px solid var(--border-color); background: #f8fafc; color: var(--text-main); font-weight: 600; text-decoration: none; font-size: 14px; border-radius: 4px; transition: all 0.2s; }
-        .pagination-link.active { background: var(--brand-blue); color: #ffffff; border-color: var(--brand-blue); }
-        .pagination-link:hover:not(.active) { background: #cbd5e1; }
+        .btn-outline { background: #f8fafc; border: 1px solid var(--border-color); color: var(--text-main); }
+        .btn-outline:hover { background: #e2e8f0; }
+        .diary-tabs { display: flex; flex-wrap: wrap; border: 1px solid var(--border-color); }
+        .diary-tab { padding: 8px 14px; font-size: 12px; font-weight: 700; background: #fff; color: var(--text-muted); text-decoration: none; }
+        .diary-tab:hover:not(.active) { background: #f1f5f9; color: var(--text-main); }
+        .diary-tab.active { background: var(--brand-dark); color: #fff; }
     </style>
 </head>
 <body>
@@ -454,6 +492,7 @@ unset($_SESSION['message'], $_SESSION['error']);
             <a href="staff_management.php" class="menu-item">
                 <i class="fas fa-users-rectangle"></i> Staff Roster
             </a>
+            <a href="password_requests.php" class="menu-item"><i class="fas fa-key"></i> Password Requests</a>
             <a href="services_management.php" class="menu-item">
                 <i class="fas fa-list-ul"></i> Services & Pricing
             </a>
@@ -464,14 +503,18 @@ unset($_SESSION['message'], $_SESSION['error']);
                 <i class="fas fa-calendar-days"></i> Appointments
             </a>
             <a href="reports.php" class="menu-item">
-                <i class="fas fa-file-invoice-dollar"></i> Financial Reports
+                <i class="fas fa-file-invoice-dollar"></i> Reports
             </a>
             <a href="clients.php" class="menu-item">
                 <i class="fas fa-address-book"></i> Client Directory
             </a>
+            <?php if ($user_role === 'admin'): ?>
+            
+            <a href="backup.php" class="menu-item"><i class="fas fa-database"></i> Database Backup</a>
             <a href="audit_logs.php" class="menu-item">
                 <i class="fas fa-server"></i> System Audit Logs
             </a>
+            <?php endif; ?>
         </nav>
         <a href="../logout.php" class="logout-btn">
             <i class="fas fa-arrow-right-from-bracket"></i> Terminate Session
@@ -496,8 +539,10 @@ unset($_SESSION['message'], $_SESSION['error']);
             <div class="flat-card">
                 <div class="flat-card-header">
                     <h3>Register Massage Type</h3>
+                    <span style="font-size:12px; color:var(--text-muted);">60 / 90 / 120 prices are used on Register Client. Leave unused durations blank.</span>
                 </div>
                 <form method="post">
+<?= csrf_field() ?>
                     <div class="form-row" style="grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));">
                         <div class="form-group">
                             <label>Massage Name</label>
@@ -506,8 +551,8 @@ unset($_SESSION['message'], $_SESSION['error']);
                         <div class="form-group">
                             <label>Category</label>
                             <select name="category" class="form-control" required>
-                                <option value="Full Body Massage">Full Body Massage</option>
-                                <option value="Express Massage">Express Massage</option>
+                                <option value="Full Body Massage" <?= $category_view === 'Full Body Massage' ? 'selected' : '' ?>>Full Body Massage</option>
+                                <option value="Express Massage" <?= $category_view === 'Express Massage' ? 'selected' : '' ?>>Express Massage</option>
                             </select>
                         </div>
                         <div class="form-group">
@@ -533,7 +578,12 @@ unset($_SESSION['message'], $_SESSION['error']);
 
             <div class="flat-card">
                 <div class="flat-card-header">
-                    <h3>Registered Massage Types</h3>
+                    <h3><?= htmlspecialchars($category_view) ?></h3>
+                    <div class="diary-tabs">
+                        <?php foreach ($massage_categories as $cat): ?>
+                        <a class="diary-tab<?= $category_view === $cat ? ' active' : '' ?>" href="massage_management.php?category=<?= urlencode($cat) ?>"><?= $cat === 'Full Body Massage' ? 'Full Body' : 'Express' ?> (<?= (int)$counts[$cat] ?>)</a>
+                        <?php endforeach; ?>
+                    </div>
                 </div>
                 <div class="table-container">
                     <table>
@@ -548,7 +598,7 @@ unset($_SESSION['message'], $_SESSION['error']);
                             </tr>
                         </thead>
                         <tbody>
-                            <?php while ($massage = $massage_result->fetch_assoc()): ?>
+                            <?php foreach ($massage_rows as $massage): ?>
                             <tr>
                                 <td><i class="fas fa-spa" style="color:var(--text-muted); margin-right:10px;"></i> <strong><?= htmlspecialchars($massage['name']) ?></strong></td>
                                 <td><span style="font-size: 14px; background: #e2e8f0; color: #475569; padding: 4px 8px; border-radius: 4px; font-weight: 500;"><?= htmlspecialchars($massage['category']) ?></span></td>
@@ -557,48 +607,25 @@ unset($_SESSION['message'], $_SESSION['error']);
                                 <td class="price-text"><?= $massage['price_120'] > 0 ? number_format($massage['price_120'], 2) : '-' ?></td>
                                 <td>
                                     <div class="action-cell">
-                                        <a href="edit_massage.php?id=<?= $massage['id'] ?>" class="btn btn-outline btn-sm">Edit</a>
+                                        <a href="edit_massage.php?id=<?= (int)$massage['id'] ?>&category=<?= urlencode($category_view) ?>" class="btn btn-outline btn-sm">Edit</a>
                                         <form method="post" style="display:inline;" onsubmit="return confirm('Warning: This will remove this massage type. Continue?');">
-                                            <input type="hidden" name="massage_id" value="<?= $massage['id'] ?>">
+<?= csrf_field() ?>
+                                            <input type="hidden" name="massage_id" value="<?= (int)$massage['id'] ?>">
+                                            <input type="hidden" name="return_category" value="<?= htmlspecialchars($category_view) ?>">
                                             <button type="submit" name="delete_massage" class="btn btn-danger btn-sm">Delete</button>
                                         </form>
                                     </div>
                                 </td>
                             </tr>
-                            <?php endwhile; ?>
-                            <?php if ($massage_result->num_rows === 0): ?>
+                            <?php endforeach; ?>
+                            <?php if (!$massage_rows): ?>
                             <tr>
-                                <td colspan="6" style="text-align: center; color: var(--text-muted); padding: 40px; font-size: 16px;">No massage types registered.</td>
+                                <td colspan="6" style="text-align: center; color: var(--text-muted); padding: 40px; font-size: 16px;">No massage types in this category.</td>
                             </tr>
                             <?php endif; ?>
                         </tbody>
                     </table>
                 </div>
-                
-                <?php if ($total_pages > 1): ?>
-                <div class="pagination">
-                    <?php if ($page > 1): ?>
-                        <a href="massage_management.php?page=1" class="pagination-link" title="First Page"><i class="fas fa-angle-double-left"></i></a>
-                        <a href="massage_management.php?page=<?= $page - 1 ?>" class="pagination-link" title="Previous Page"><i class="fas fa-chevron-left"></i></a>
-                    <?php endif; ?>
-
-                    <?php
-                    $max_visible_pages = 5;
-                    $start_page = max(1, $page - 2);
-                    $end_page = min($total_pages, $start_page + $max_visible_pages - 1);
-                    if ($end_page - $start_page + 1 < $max_visible_pages) {
-                        $start_page = max(1, $end_page - $max_visible_pages + 1);
-                    }
-                    for ($i = $start_page; $i <= $end_page; $i++): ?>
-                        <a href="massage_management.php?page=<?= $i ?>" class="pagination-link <?= $i === $page ? 'active' : '' ?>"><?= $i ?></a>
-                    <?php endfor; ?>
-
-                    <?php if ($page < $total_pages): ?>
-                        <a href="massage_management.php?page=<?= $page + 1 ?>" class="pagination-link" title="Next Page"><i class="fas fa-chevron-right"></i></a>
-                        <a href="massage_management.php?page=<?= $total_pages ?>" class="pagination-link" title="Last Page"><i class="fas fa-angle-double-right"></i></a>
-                    <?php endif; ?>
-                </div>
-                <?php endif; ?>
             </div>
 
         </div>

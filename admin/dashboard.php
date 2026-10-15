@@ -1,30 +1,40 @@
 <?php
-session_start();
+require_once __DIR__ . '/../includes/session.php';
 include '../db.php';
 
 // RBAC: Allow Admin and Supervisor only
 if (!isset($_SESSION['user']) || !in_array($_SESSION['user']['role'], ['admin', 'supervisor'])) {
-    header("Location: ../login.php");
+    header("Location: login.php");
     exit;
 }
 
 $user_role = $_SESSION['user']['role'];
 
-// Get all data
-$staff_result = $conn->query("SELECT * FROM staff ORDER BY role ASC");
-
-// Get staff count for dashboard card
-$staff_count = $conn->query("SELECT COUNT(*) as count FROM staff")->fetch_assoc()['count'];
-$services_count = $conn->query("SELECT COUNT(*) as count FROM services")->fetch_assoc()['count'];
-$massage_count = $conn->query("SELECT COUNT(*) as count FROM massage_types")->fetch_assoc()['count'];
-$total_clients = $conn->query("SELECT COUNT(*) as count FROM clients")->fetch_assoc()['count'];
-
-// Get analytics data for charts
 $current_month = date('Y-m');
-$total_transactions = $conn->query("SELECT COUNT(*) as count FROM clients WHERE DATE_FORMAT(created_at, '%Y-%m') = '$current_month'")->fetch_assoc()['count'];
-$total_revenue = $conn->query("SELECT SUM(amount) as total FROM clients WHERE DATE_FORMAT(created_at, '%Y-%m') = '$current_month'")->fetch_assoc()['total'] ?? 0;
-$service_revenue = $conn->query("SELECT service_type, SUM(amount) as total FROM clients WHERE DATE_FORMAT(created_at, '%Y-%m') = '$current_month' GROUP BY service_type ORDER BY total DESC");
-$monthly_revenue = $conn->query("SELECT DATE_FORMAT(created_at, '%Y-%m') as month, SUM(amount) as total FROM clients WHERE created_at >= DATE_SUB(NOW(), INTERVAL 6 MONTH) GROUP BY DATE_FORMAT(created_at, '%Y-%m') ORDER BY month");
+$net_amount_sql = client_net_amount_sql();
+
+$total_transactions = 0;
+$stmt_trans = $conn->prepare("SELECT COUNT(*) as count FROM clients WHERE DATE_FORMAT(created_at, '%Y-%m') = ? AND voided_at IS NULL");
+if ($stmt_trans) {
+    $stmt_trans->bind_param("s", $current_month);
+    $stmt_trans->execute();
+    $res = $stmt_trans->get_result();
+    if ($res && $r = $res->fetch_assoc()) {
+        $total_transactions = (int)($r['count'] ?? 0);
+    }
+}
+
+$total_revenue = 0.0;
+$stmt_rev = $conn->prepare("SELECT COALESCE(SUM($net_amount_sql),0) as total FROM clients WHERE DATE_FORMAT(created_at, '%Y-%m') = ?");
+if ($stmt_rev) {
+    $stmt_rev->bind_param("s", $current_month);
+    $stmt_rev->execute();
+    $res = $stmt_rev->get_result();
+    if ($res && $r = $res->fetch_assoc()) {
+        $total_revenue = (float)($r['total'] ?? 0);
+    }
+}
+$average_ticket = $total_transactions > 0 ? ($total_revenue / $total_transactions) : 0;
 
 // Insights: New vs Returning (current month)
 $new_vs_returning = [ 'new' => 0, 'returning' => 0 ];
@@ -43,20 +53,30 @@ $idColSql = "`" . $conn->real_escape_string($identifierColumn) . "`";
 $first_visits_sql = "SELECT COUNT(*) AS cnt FROM (
   SELECT $idColSql AS identifier, MIN(DATE_FORMAT(created_at, '%Y-%m')) AS first_month
   FROM clients
-  WHERE $idColSql IS NOT NULL AND $idColSql <> ''
+  WHERE $idColSql IS NOT NULL AND $idColSql <> '' AND voided_at IS NULL
   GROUP BY $idColSql
-) t WHERE t.first_month = '$current_month'";
-$first_visits = $conn->query($first_visits_sql);
-if ($first_visits && ($row = $first_visits->fetch_assoc())) { $new_vs_returning['new'] = (int)$row['cnt']; }
+) t WHERE t.first_month = ?";
+$stmt_fv = $conn->prepare($first_visits_sql);
+if ($stmt_fv) {
+    $stmt_fv->bind_param("s", $current_month);
+    $stmt_fv->execute();
+    $first_visits = $stmt_fv->get_result();
+    if ($first_visits && ($row = $first_visits->fetch_assoc())) { $new_vs_returning['new'] = (int)$row['cnt']; }
+}
 $new_vs_returning['returning'] = max(0, (int)$total_transactions - (int)$new_vs_returning['new']);
 
 // Insights: Section Performance (this month)
 $section_performance = [];
-$section_rs = $conn->query("SELECT section, COUNT(*) AS visits, COALESCE(SUM(amount),0) AS revenue
+$stmt_sec = $conn->prepare("SELECT section, SUM(CASE WHEN voided_at IS NULL THEN 1 ELSE 0 END) AS visits, COALESCE(SUM($net_amount_sql),0) AS revenue
   FROM clients
-  WHERE DATE_FORMAT(created_at, '%Y-%m') = '$current_month'
+  WHERE DATE_FORMAT(created_at, '%Y-%m') = ?
   GROUP BY section ORDER BY revenue DESC");
-if ($section_rs) { while ($r = $section_rs->fetch_assoc()) { $section_performance[] = $r; } }
+if ($stmt_sec) {
+    $stmt_sec->bind_param("s", $current_month);
+    $stmt_sec->execute();
+    $section_rs = $stmt_sec->get_result();
+    if ($section_rs) { while ($r = $section_rs->fetch_assoc()) { $section_performance[] = $r; } }
+}
 
 // Handle alert messages
 $message = '';
@@ -72,7 +92,6 @@ if (isset($_SESSION['message'])) {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Admin Dashboard | The Breeze Spa</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         :root {
             --brand-blue: #0ea5e9; --brand-dark: #0f172a; --bg-body: #f1f5f9; --bg-card: #ffffff;
@@ -141,6 +160,7 @@ if (isset($_SESSION['message'])) {
         <nav class="sidebar-menu">
             <a href="dashboard.php" class="menu-item active"><i class="fas fa-square-poll-vertical"></i> Dashboard Overview</a>
             <a href="staff_management.php" class="menu-item"><i class="fas fa-users-rectangle"></i> Staff Roster</a>
+            <a href="password_requests.php" class="menu-item"><i class="fas fa-key"></i> Password Requests</a>
             <a href="services_management.php" class="menu-item"><i class="fas fa-list-ul"></i> Services & Pricing</a>
             
             <?php if ($user_role === 'admin' || $user_role === 'supervisor'): ?>
@@ -148,10 +168,13 @@ if (isset($_SESSION['message'])) {
             <?php endif; ?>
             
             <a href="appointments.php" class="menu-item"><i class="fas fa-calendar-days"></i> Appointments</a>
-            <a href="reports.php" class="menu-item"><i class="fas fa-file-invoice-dollar"></i> Financial Reports</a>
+            <a href="reports.php" class="menu-item"><i class="fas fa-file-invoice-dollar"></i> Reports</a>
+            <a href="till.php" class="menu-item"><i class="fas fa-cash-register"></i> Close of Day</a>
             <a href="clients.php" class="menu-item"><i class="fas fa-address-book"></i> Client Directory</a>
             
             <?php if ($user_role === 'admin'): ?>
+            
+            <a href="backup.php" class="menu-item"><i class="fas fa-database"></i> Database Backup</a>
             <a href="audit_logs.php" class="menu-item"><i class="fas fa-server"></i> System Audit Logs</a>
             <?php endif; ?>
         </nav>
@@ -174,61 +197,31 @@ if (isset($_SESSION['message'])) {
 
             <div class="kpi-grid">
                 <div class="kpi-card">
-                    <div class="kpi-icon"><i class="fas fa-users"></i></div>
-                    <div class="kpi-meta">
-                        <span class="kpi-label">Registered Clients</span>
-                        <span class="kpi-value"><?= number_format($total_clients) ?></span>
-                    </div>
-                </div>
-                <div class="kpi-card">
                     <div class="kpi-icon"><i class="fas fa-wallet"></i></div>
                     <div class="kpi-meta">
-                        <span class="kpi-label">MTD Revenue (GHS)</span>
-                        <span class="kpi-value"><?= number_format($total_revenue, 2) ?></span>
+                        <span class="kpi-label">MTD Revenue</span>
+                        <span class="kpi-value">GHS <?= number_format($total_revenue, 2) ?></span>
                     </div>
                 </div>
                 <div class="kpi-card">
-                    <div class="kpi-icon"><i class="fas fa-chart-line"></i></div>
+                    <div class="kpi-icon"><i class="fas fa-receipt"></i></div>
                     <div class="kpi-meta">
-                        <span class="kpi-label">MTD Transactions</span>
+                        <span class="kpi-label">MTD Visits</span>
                         <span class="kpi-value"><?= number_format($total_transactions) ?></span>
                     </div>
                 </div>
                 <div class="kpi-card">
-                    <div class="kpi-icon"><i class="fas fa-user-tie"></i></div>
+                    <div class="kpi-icon"><i class="fas fa-chart-pie"></i></div>
                     <div class="kpi-meta">
-                        <span class="kpi-label">Active Staff</span>
-                        <span class="kpi-value"><?= number_format($staff_count) ?></span>
+                        <span class="kpi-label">Average Ticket</span>
+                        <span class="kpi-value">GHS <?= number_format($average_ticket, 2) ?></span>
                     </div>
                 </div>
-            </div>
-
-            <div class="dashboard-grid">
-                <div class="flat-card">
-                    <div class="flat-card-header">
-                        <h3>6-Month Revenue Trend</h3>
-                    </div>
-                    <div class="chart-container">
-                        <canvas id="revenueChart"></canvas>
-                    </div>
-                </div>
-
-                <div class="flat-card">
-                    <div class="flat-card-header">
-                        <h3>Client Acquisition (MTD)</h3>
-                    </div>
-                    <div style="flex: 1; display: flex; flex-direction: column; justify-content: center; text-align: center;">
-                        <div style="font-size: 48px; font-weight: 700; color: var(--brand-blue); margin-bottom: 10px;">
-                            <?= number_format($new_vs_returning['new']) ?>
-                        </div>
-                        <div style="font-size: 13px; font-weight: 600; color: var(--text-muted); text-transform: uppercase;">New Clients</div>
-                        
-                        <hr style="border: 0; border-top: 1px solid var(--border-color); margin: 20px 0;">
-                        
-                        <div style="font-size: 32px; font-weight: 600; color: var(--text-main); margin-bottom: 10px;">
-                            <?= number_format($new_vs_returning['returning']) ?>
-                        </div>
-                        <div style="font-size: 13px; font-weight: 600; color: var(--text-muted); text-transform: uppercase;">Returning Clients</div>
+                <div class="kpi-card">
+                    <div class="kpi-icon"><i class="fas fa-user-plus"></i></div>
+                    <div class="kpi-meta">
+                        <span class="kpi-label">New Clients (MTD)</span>
+                        <span class="kpi-value"><?= number_format($new_vs_returning['new']) ?></span>
                     </div>
                 </div>
             </div>
@@ -247,105 +240,31 @@ if (isset($_SESSION['message'])) {
                                 </li>
                             <?php endforeach; ?>
                         <?php else: ?>
-                            <li><span class="label" style="color:var(--text-muted);">Insufficient data for current month.</span></li>
+                            <li><span class="label" style="color:var(--text-muted);">No visits recorded this month yet.</span></li>
                         <?php endif; ?>
                     </ul>
                 </div>
 
                 <div class="flat-card">
                     <div class="flat-card-header">
-                        <h3>Service Distribution</h3>
+                        <h3>Client Mix (MTD)</h3>
                     </div>
-                    <div class="chart-container" style="height: 250px;">
-                        <canvas id="serviceChart"></canvas>
+                    <div style="flex: 1; display: flex; flex-direction: column; justify-content: center; text-align: center;">
+                        <div style="font-size: 42px; font-weight: 700; color: var(--brand-blue); margin-bottom: 8px;">
+                            <?= number_format($new_vs_returning['new']) ?>
+                        </div>
+                        <div style="font-size: 13px; font-weight: 600; color: var(--text-muted); text-transform: uppercase;">New Clients</div>
+                        <hr style="border: 0; border-top: 1px solid var(--border-color); margin: 20px 0;">
+                        <div style="font-size: 28px; font-weight: 600; color: var(--text-main); margin-bottom: 8px;">
+                            <?= number_format($new_vs_returning['returning']) ?>
+                        </div>
+                        <div style="font-size: 13px; font-weight: 600; color: var(--text-muted); text-transform: uppercase;">Returning Clients</div>
+                        <a href="reports.php" style="margin-top:24px; display:inline-block; font-size:13px; font-weight:700; color:var(--brand-blue); text-decoration:none;">Open Reports →</a>
                     </div>
                 </div>
             </div>
 
         </div>
     </main>
-
-    <script>
-        const brandBlue = '#0ea5e9';
-        const flatColors = ['#0ea5e9', '#3b82f6', '#6366f1', '#8b5cf6', '#10b981', '#f59e0b'];
-
-        const revenueCtx = document.getElementById('revenueChart').getContext('2d');
-        const revenueData = {
-            labels: [<?php 
-                $monthly_revenue->data_seek(0);
-                $labels = [];
-                $data = [];
-                while ($row = $monthly_revenue->fetch_assoc()) {
-                    $labels[] = "'" . date('M Y', strtotime($row['month'] . '-01')) . "'";
-                    $data[] = $row['total'];
-                }
-                echo implode(', ', $labels);
-            ?>],
-            datasets: [{
-                label: 'Gross Revenue (GHS)',
-                data: [<?= implode(', ', $data) ?>],
-                borderColor: brandBlue,
-                backgroundColor: 'rgba(14, 165, 233, 0.1)',
-                borderWidth: 2,
-                pointBackgroundColor: '#ffffff',
-                pointBorderColor: brandBlue,
-                pointRadius: 4,
-                fill: true,
-                tension: 0
-            }]
-        };
-
-        new Chart(revenueCtx, {
-            type: 'line',
-            data: revenueData,
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: { legend: { display: false } },
-                scales: {
-                    x: { grid: { display: false } },
-                    y: {
-                        beginAtZero: true, border: { display: false }, grid: { color: '#e2e8f0' },
-                        ticks: { callback: function(value) { return 'GHS ' + value.toLocaleString(); } }
-                    }
-                }
-            }
-        });
-
-        const serviceCtx = document.getElementById('serviceChart').getContext('2d');
-        const serviceData = {
-            labels: [<?php 
-                $service_revenue->data_seek(0);
-                $labels = [];
-                $data = [];
-                while ($row = $service_revenue->fetch_assoc()) {
-                    $labels[] = "'" . $row['service_type'] . "'";
-                    $data[] = $row['total'];
-                }
-                echo implode(', ', $labels);
-            ?>],
-            datasets: [{
-                data: [<?= implode(', ', $data) ?>],
-                backgroundColor: flatColors,
-                borderWidth: 0
-            }]
-        };
-
-        new Chart(serviceCtx, {
-            type: 'doughnut',
-            data: serviceData,
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                cutout: '70%',
-                plugins: {
-                    legend: {
-                        position: 'right',
-                        labels: { usePointStyle: true, padding: 20, font: { family: "'Segoe UI', sans-serif", size: 12 } }
-                    }
-                }
-            }
-        });
-    </script>
 </body>
 </html>

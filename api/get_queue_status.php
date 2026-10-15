@@ -1,9 +1,11 @@
 <?php
-header("Access-Control-Allow-Origin: *");
 header('Content-Type: application/json');
-session_start();
+require_once __DIR__ . '/../includes/session.php';
+check_api_rate_limit(120, 60);
 
 include '../db.php';
+include '../includes/client_timer.php';
+include '../includes/due_appointments.php';
 
 // Security check: Allow frontdesk, reception, admin, and supervisor roles
 if (!isset($_SESSION['user']) || !in_array($_SESSION['user']['role'], ['frontdesk', 'reception', 'admin', 'supervisor'])) {
@@ -12,37 +14,41 @@ if (!isset($_SESSION['user']) || !in_array($_SESSION['user']['role'], ['frontdes
     exit;
 }
 
+ensure_client_timer_schema($conn);
+
 $today = date('Y-m-d');
-$current_month = date('Y-m');
 
 $ongoing_services = [];
-$hour = (int)date('H');
-if (false && $hour >= 20) { // Disabled for testing; change to 'true && $hour >= 20' to reactivate
-    $ongoing_res = $conn->query("SELECT * FROM clients WHERE DATE(created_at) = '$today' AND (status != 'Done' OR status IS NULL) ORDER BY created_at DESC");
-} else {
-    $ongoing_res = $conn->query("SELECT * FROM clients WHERE DATE(created_at) = '$today' ORDER BY created_at DESC");
-}
-
-if ($ongoing_res) {
-    while ($row = $ongoing_res->fetch_assoc()) {
-        $ongoing_services[] = $row;
+$stmt = $conn->prepare("SELECT * FROM clients WHERE DATE(created_at) = ? ORDER BY created_at DESC");
+if ($stmt) {
+    $stmt->bind_param("s", $today);
+    $stmt->execute();
+    $ongoing_res = $stmt->get_result();
+    if ($ongoing_res) {
+        while ($row = $ongoing_res->fetch_assoc()) {
+            $ongoing_services[] = attach_timer_fields($row);
+        }
     }
 }
 
-// Fetch KPI metrics
-$total_today = $conn->query("SELECT COUNT(*) as total FROM clients WHERE DATE(created_at) = '$today'")->fetch_assoc()['total'];
-$total_month = $conn->query("SELECT COUNT(*) as total FROM clients WHERE DATE_FORMAT(created_at, '%Y-%m') = '$current_month'")->fetch_assoc()['total'];
-
-$rev_today = $conn->query("SELECT SUM(amount) as total FROM clients WHERE DATE(created_at) = '$today'")->fetch_assoc()['total'] ?? 0;
-$rev_month = $conn->query("SELECT SUM(amount) as total FROM clients WHERE DATE_FORMAT(created_at, '%Y-%m') = '$current_month'")->fetch_assoc()['total'] ?? 0;
+$stats = floor_stats_from_queue($ongoing_services);
+$due_today = fetch_due_appointments_today($conn);
 
 echo json_encode([
     'queue' => $ongoing_services,
+    'due_today' => $due_today,
+    'server_unix' => time(),
     'kpis' => [
-        'total_today' => (int)$total_today,
-        'total_month' => (int)$total_month,
-        'rev_today' => (float)$rev_today,
-        'rev_month' => (float)$rev_month
+        'total_today' => (int)$stats['checkins'],
+        'rev_today' => (float)$stats['revenue'],
+        'waiting' => (int)$stats['waiting'],
+        'in_progress' => (int)$stats['in_progress'],
+        'overtime' => (int)$stats['overtime'],
+        'done' => (int)$stats['done'],
+        'cash' => (float)$stats['cash'],
+        'momo' => (float)$stats['momo'],
+        'other' => (float)$stats['other'],
+        'sections' => $stats['sections'],
     ]
 ]);
 ?>

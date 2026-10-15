@@ -1,5 +1,5 @@
 <?php
-session_start();
+require_once __DIR__ . '/../includes/session.php';
 include '../db.php';
 
 // RBAC: Allow Admin and Supervisor
@@ -9,6 +9,9 @@ if (!isset($_SESSION['user']) || !in_array($_SESSION['user']['role'], ['admin', 
 }
 
 $user_role = $_SESSION['user']['role'];
+
+$addable_sections = ['Facials', 'Hair Barbering', 'Hair Salon', 'Nails & Manicure', 'Make-up'];
+$error = '';
 
 // Check if service ID is provided
 if (!isset($_GET['id'])) {
@@ -34,23 +37,33 @@ $service = $result->fetch_assoc();
 // Handle form submission
 if ($_SERVER["REQUEST_METHOD"] == "POST") {
     $name = trim($_POST['service_name']);
-    $section = $_POST['section'];
+    $section = trim((string)($_POST['section'] ?? ''));
     $price = $_POST['price'];
     $duration = isset($_POST['duration']) ? trim($_POST['duration']) : '';
 
-    $stmt = $conn->prepare("UPDATE services SET service_name = ?, section = ?, price = ?, duration = ? WHERE id = ?");
-    $stmt->bind_param("ssdsi", $name, $section, $price, $duration, $service_id);
-    
-    if ($stmt->execute()) {
-        $_SESSION['message'] = "Service updated successfully.";
-        header("Location: services_management.php");
-        exit;
+    $allowed_sections = $addable_sections;
+    if (!empty($service['section']) && !in_array($service['section'], $allowed_sections, true)) {
+        $allowed_sections[] = $service['section'];
+    }
+    if (!in_array($section, $allowed_sections, true)) {
+        $error = 'Please choose a floor section.';
     } else {
-        $_SESSION['error'] = "System error: Unable to update service.";
+        $stmt = $conn->prepare("UPDATE services SET service_name = ?, section = ?, price = ?, duration = ? WHERE id = ?");
+        $stmt->bind_param("ssdsi", $name, $section, $price, $duration, $service_id);
+
+        if ($stmt->execute()) {
+            $_SESSION['message'] = "Service updated successfully.";
+            header('Location: services_management.php?section=' . urlencode($section));
+            exit;
+        } else {
+            $error = "System error: Unable to update service.";
+        }
     }
 }
 
-$error = $_SESSION['error'] ?? '';
+if (empty($error)) {
+    $error = $_SESSION['error'] ?? '';
+}
 unset($_SESSION['error']);
 ?>
 <!DOCTYPE html>
@@ -131,15 +144,19 @@ unset($_SESSION['error']);
             <a href="dashboard.php" class="menu-item"><i class="fas fa-square-poll-vertical"></i> Dashboard Overview</a>
             
             <a href="staff_management.php" class="menu-item"><i class="fas fa-users-rectangle"></i> Staff Roster</a>
+            <a href="password_requests.php" class="menu-item"><i class="fas fa-key"></i> Password Requests</a>
 
             <a href="services_management.php" class="menu-item active"><i class="fas fa-list-ul"></i> Services & Pricing</a>
             <a href="massage_management.php" class="menu-item"><i class="fas fa-spa"></i> Massage Categories</a>
             <a href="appointments.php" class="menu-item"><i class="fas fa-calendar-days"></i> Appointments</a>
-            <a href="reports.php" class="menu-item"><i class="fas fa-file-invoice-dollar"></i> Financial Reports</a>
+            <a href="reports.php" class="menu-item"><i class="fas fa-file-invoice-dollar"></i> Reports</a>
+            <a href="till.php" class="menu-item"><i class="fas fa-cash-register"></i> Close of Day</a>
             <a href="clients.php" class="menu-item"><i class="fas fa-address-book"></i> Client Directory</a>
             
             <?php if ($user_role === 'admin'): ?>
-                <a href="audit_logs.php" class="menu-item"><i class="fas fa-server"></i> System Audit Logs</a>
+                
+            <a href="backup.php" class="menu-item"><i class="fas fa-database"></i> Database Backup</a>
+            <a href="audit_logs.php" class="menu-item"><i class="fas fa-server"></i> System Audit Logs</a>
             <?php endif; ?>
         </nav>
         <a href="../logout.php" class="logout-btn"><i class="fas fa-arrow-right-from-bracket"></i> Terminate Session</a>
@@ -162,6 +179,7 @@ unset($_SESSION['error']);
         <div class="flat-card-header"><h3>Service Configuration</h3></div>
         
         <form method="post">
+<?= csrf_field() ?>
             <div class="form-group">
                 <label>Service Name</label>
                 <input type="text" name="service_name" class="form-control" value="<?= htmlspecialchars($service['service_name']) ?>" required>
@@ -170,12 +188,15 @@ unset($_SESSION['error']);
             <div class="form-group">
                 <label>Section</label>
                 <select name="section" id="section" class="form-control" required>
-                    <option value="Massage" <?= $service['section'] === 'Massage' ? 'selected' : '' ?>>Massage</option>
-                    <option value="Pedicure & Manicure" <?= $service['section'] === 'Pedicure & Manicure' ? 'selected' : '' ?>>Pedicure & Manicure</option>
-                    <option value="Barbering" <?= $service['section'] === 'Barbering' ? 'selected' : '' ?>>Barbering</option>
-                    <option value="Hair Salon" <?= $service['section'] === 'Hair Salon' ? 'selected' : '' ?>>Hair Salon</option>
-                    <option value="Facials" <?= $service['section'] === 'Facials' ? 'selected' : '' ?>>Facials</option>
-                    <option value="Make-Up services" <?= $service['section'] === 'Make-Up services' ? 'selected' : '' ?>>Make-Up services</option>
+                    <?php
+                    $section_options = $addable_sections;
+                    if (!empty($service['section']) && !in_array($service['section'], $section_options, true)) {
+                        array_unshift($section_options, $service['section']);
+                    }
+                    foreach ($section_options as $sec):
+                    ?>
+                    <option value="<?= htmlspecialchars($sec) ?>" <?= $service['section'] === $sec ? 'selected' : '' ?>><?= htmlspecialchars($sec) ?></option>
+                    <?php endforeach; ?>
                 </select>
             </div>
             

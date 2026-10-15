@@ -1,0 +1,20 @@
+# Disable directory browsing
+Options -Indexes
+
+# Block sensitive and operational files
+<FilesMatch "(^\.env|\.(sql|log|md|json|lock|git|yml|yaml))$">
+    <IfModule mod_authz_core.c>
+        Require all denied
+    </IfModule>
+    <IfModule !mod_authz_core.c>
+        Deny from all
+    </IfModule>
+</FilesMatch>
+
+# HTTP Security Headers (Defense in Depth)
+<IfModule mod_headers.c>
+    Header always set X-Content-Type-Options "nosniff"
+    Header always set X-Frame-Options "DENY"
+    Header always set Referrer-Policy "strict-origin-when-cross-origin"
+    Header always set Permissions-Policy "camera=(), microphone=(), geolocation=()"
+</IfModule>

@@ -1,0 +1,9 @@
+User-agent: *
+Disallow: /admin/
+Disallow: /frontdesk/
+Disallow: /reception/
+Disallow: /sections/
+Disallow: /api/
+Disallow: /includes/
+Disallow: /scripts/
+Disallow: /storage/

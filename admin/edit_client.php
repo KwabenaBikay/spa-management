@@ -1,10 +1,10 @@
 <?php
-session_start();
+require_once __DIR__ . '/../includes/session.php';
 include '../db.php';
 
 // RBAC: Allow BOTH Admin and Supervisor
 if (!isset($_SESSION['user']) || !in_array($_SESSION['user']['role'], ['admin', 'supervisor'])) {
-  header('Location: ../login.php');
+  header('Location: login.php');
   exit;
 }
 
@@ -24,8 +24,15 @@ $conn->query("CREATE TABLE IF NOT EXISTS audit_logs (
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
 
+$floor_sections = ['Massage', 'Facials', 'Hair Barbering', 'Hair Salon', 'Nails & Manicure', 'Make-up'];
+$return_view = trim((string)($_GET['view'] ?? $_POST['view'] ?? 'today'));
+if (!in_array($return_view, ['today', 'all'], true)) {
+  $return_view = 'today';
+}
+$catalog_url = 'clients.php?view=' . urlencode($return_view);
+
 if (!isset($_GET['id'])) {
-  header("Location: clients.php");
+  header('Location: ' . $catalog_url);
   exit;
 }
 $id = (int)$_GET['id'];
@@ -35,7 +42,7 @@ $stmt->bind_param('i', $id);
 $stmt->execute();
 $res = $stmt->get_result();
 if ($res->num_rows === 0) {
-  header("Location: clients.php");
+  header('Location: ' . $catalog_url);
   exit;
 }
 $client = $res->fetch_assoc();
@@ -49,10 +56,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
   $payment_mode = $_POST['payment_mode'];
   $massage_type = trim($_POST['massage_type']);
   $staff_name = trim($_POST['staff_name']);
-  $section = $_POST['section'];
+  $section = trim((string)($_POST['section'] ?? ''));
+  $allowed_sections = $floor_sections;
+  $current_section = trim((string)($client['section'] ?? ''));
+  if ($current_section !== '' && !in_array($current_section, $allowed_sections, true)) {
+    $allowed_sections[] = $current_section;
+  }
 
   if (strlen($phone) !== 10) {
     $error = 'Phone number must be exactly 10 digits.';
+  } elseif (!in_array($section, $allowed_sections, true)) {
+    $error = 'Please choose a floor section.';
   }
 
   if (empty($error)) {
@@ -84,10 +98,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $log->execute();
       }
       $_SESSION['message'] = 'Client updated successfully';
-      header('Location: clients.php');
+      header('Location: ' . $catalog_url);
       exit;
     } else {
-      $error = 'Update failed: ' . $conn->error;
+      $error = 'Update failed. Please try again.';
     }
   }
 }
@@ -180,6 +194,7 @@ unset($_SESSION['error']);
             <a href="dashboard.php" class="menu-item"><i class="fas fa-square-poll-vertical"></i> Dashboard Overview</a>
             
             <a href="staff_management.php" class="menu-item"><i class="fas fa-users-rectangle"></i> Staff Roster</a>
+            <a href="password_requests.php" class="menu-item"><i class="fas fa-key"></i> Password Requests</a>
 
             <a href="services_management.php" class="menu-item"><i class="fas fa-list-ul"></i> Services & Pricing</a>
             
@@ -188,11 +203,14 @@ unset($_SESSION['error']);
             <?php endif; ?>
             
             <a href="appointments.php" class="menu-item"><i class="fas fa-calendar-days"></i> Appointments</a>
-            <a href="reports.php" class="menu-item"><i class="fas fa-file-invoice-dollar"></i> Financial Reports</a>
+            <a href="reports.php" class="menu-item"><i class="fas fa-file-invoice-dollar"></i> Reports</a>
+            <a href="till.php" class="menu-item"><i class="fas fa-cash-register"></i> Close of Day</a>
             <a href="clients.php" class="menu-item active"><i class="fas fa-address-book"></i> Client Directory</a>
             
             <?php if ($user_role === 'admin'): ?>
-                <a href="audit_logs.php" class="menu-item"><i class="fas fa-server"></i> System Audit Logs</a>
+                
+            <a href="backup.php" class="menu-item"><i class="fas fa-database"></i> Database Backup</a>
+            <a href="audit_logs.php" class="menu-item"><i class="fas fa-server"></i> System Audit Logs</a>
             <?php endif; ?>
         </nav>
         <a href="../logout.php" class="logout-btn"><i class="fas fa-arrow-right-from-bracket"></i> Terminate Session</a>
@@ -201,7 +219,7 @@ unset($_SESSION['error']);
   <main class="main-content">
     <header class="topbar">
         <h2>
-            <a href="clients.php" class="btn btn-outline btn-sm" style="margin-right: 15px;"><i class="fas fa-arrow-left"></i> Back</a>
+            <a href="<?= htmlspecialchars($catalog_url) ?>" class="btn btn-outline btn-sm" style="margin-right: 15px;"><i class="fas fa-arrow-left"></i> Back</a>
             Modify Client Record
         </h2>
     </header>
@@ -215,6 +233,8 @@ unset($_SESSION['error']);
         <div class="flat-card-header"><h3>Client Information & Ledger</h3></div>
         
         <form method="post" class="grid-form">
+<?= csrf_field() ?>
+            <input type="hidden" name="view" value="<?= htmlspecialchars($return_view) ?>">
             <div class="form-group">
                 <label>Client Name</label>
                 <input type="text" name="name" class="form-control" value="<?= htmlspecialchars($client['name'] ?? '') ?>" placeholder="Client Name" required />
@@ -262,19 +282,23 @@ unset($_SESSION['error']);
             <div class="form-group full-width">
                 <label>Section</label>
                 <select name="section" id="section-select" class="form-control" required>
-                  <?php 
-                  $sections = ['Massage','Hair Barbering','Hair Salon','Facials','Nails & Manicure','Pedicure & Manicure','Make-Up services']; 
-                  foreach ($sections as $sec) { 
-                    $sel = ($client['section'] ?? '') === $sec ? 'selected' : ''; 
-                    echo "<option value=\"$sec\" $sel>$sec</option>"; 
-                  } 
+                  <?php
+                  $sections = $floor_sections;
+                  $current_section = trim((string)($client['section'] ?? ''));
+                  if ($current_section !== '' && !in_array($current_section, $sections, true)) {
+                      array_unshift($sections, $current_section);
+                  }
+                  foreach ($sections as $sec) {
+                      $sel = ($client['section'] ?? '') === $sec ? 'selected' : '';
+                      echo '<option value="' . htmlspecialchars($sec) . '" ' . $sel . '>' . htmlspecialchars($sec) . '</option>';
+                  }
                   ?>
                 </select>
             </div>
 
             <div class="action-group">
                 <button type="submit" class="btn btn-primary"><i class="fas fa-save"></i> Save Changes</button>
-                <a href="clients.php" class="btn btn-outline">Cancel</a>
+                <a href="<?= htmlspecialchars($catalog_url) ?>" class="btn btn-outline">Cancel</a>
             </div>
         </form>
       </div>

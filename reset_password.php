@@ -1,5 +1,5 @@
 <?php
-session_start();
+require_once __DIR__ . '/includes/session.php';
 include 'db.php';
 
 $error = '';
@@ -13,15 +13,19 @@ if (isset($_GET['token'])) {
     
     // Check if token exists and hasn't expired
     $stmt = $conn->prepare("SELECT id FROM staff WHERE reset_token = ? AND reset_expires > NOW() LIMIT 1");
-    $stmt->bind_param("s", $token);
-    $stmt->execute();
-    $result = $stmt->get_result();
-    
-    if ($result && $result->num_rows === 1) {
-        $valid_token = true;
-        $user_id = $result->fetch_assoc()['id'];
+    if (!$stmt) {
+        $error = "Password reset is not available. Ask an administrator.";
     } else {
-        $error = "This password reset link is invalid or has expired. Please request a new one.";
+        $stmt->bind_param("s", $token);
+        $stmt->execute();
+        $result = $stmt->get_result();
+
+        if ($result && $result->num_rows === 1) {
+            $valid_token = true;
+            $user_id = $result->fetch_assoc()['id'];
+        } else {
+            $error = "This password reset link is invalid or has expired. Please request a new one.";
+        }
     }
 } else {
     $error = "No reset token provided.";
@@ -32,8 +36,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $valid_token) {
     $new_password = $_POST['new_password'];
     $confirm_password = $_POST['confirm_password'];
 
-    if (strlen($new_password) < 6) {
-        $error = "Password must be at least 6 characters long.";
+    if (!is_password_complex($new_password, $error)) {
+        // $error populated by is_password_complex
     } elseif ($new_password !== $confirm_password) {
         $error = "Passwords do not match.";
     } else {
@@ -107,6 +111,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $valid_token) {
             <?php if ($valid_token): ?>
                 <p>Please enter your new secure password below.</p>
                 <form method="post" action="">
+<?= csrf_field() ?>
                     <div class="input-group">
                         <label>New Password</label>
                         <input type="password" name="new_password" required autofocus>

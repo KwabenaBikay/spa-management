@@ -1,5 +1,5 @@
 <?php
-session_start();
+require_once __DIR__ . '/../includes/session.php';
 include '../db.php';
 
 if (!isset($_SESSION['user']) || !in_array($_SESSION['user']['role'], ['frontdesk', 'reception'])) {
@@ -47,7 +47,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
             $success = "Client record updated successfully.";
             $client = array_merge($client, $_POST); // Update local data
         } else {
-            $error = "Update failed: " . $conn->error;
+            $error = "Update failed. Please try again.";
         }
     }
 }
@@ -128,6 +128,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
             <a href="add_client.php" class="menu-item"><i class="fas fa-user-plus"></i> Register Client</a>
             <a href="appointments.php" class="menu-item"><i class="fas fa-calendar-days"></i> Appointments</a>
             <a href="view_clients.php" class="menu-item active"><i class="fas fa-address-book"></i> Client Directory</a>
+            <a href="till.php" class="menu-item"><i class="fas fa-cash-register"></i> Close of Day</a>
         </nav>
         <a href="../logout.php" class="logout-btn"><i class="fas fa-arrow-right-from-bracket"></i> End Shift</a>
     </aside>
@@ -143,6 +144,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                 <div class="flat-card-header"><h3>Edit Client Information</h3></div>
                 
                 <form method="post" class="form-grid">
+<?= csrf_field() ?>
                     <div class="form-group"><label>Full Name</label><input type="text" name="name" class="form-control" value="<?= htmlspecialchars($client['name']) ?>" required></div>
                     <div class="form-group"><label>Phone</label><input type="tel" name="phone" class="form-control" value="<?= htmlspecialchars($client['phone']) ?>" maxlength="10" required></div>
                     

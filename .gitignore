@@ -6,6 +6,12 @@
 *.sql
 !schema.sql
 
+# Storage and Backups
+storage/
+storage/backups/
+breeze*.sql
+
+
 # Logs
 *.log
 logs/

@@ -22,8 +22,27 @@ CREATE TABLE IF NOT EXISTS `appointments` (
   `appointment_date` date NOT NULL,
   `appointment_time` time NOT NULL,
   `status` enum('Scheduled','Completed','Cancelled') DEFAULT 'Scheduled',
+  `reminded_at` datetime DEFAULT NULL,
+  `reminded_by` varchar(100) DEFAULT NULL,
   `created_at` datetime NOT NULL DEFAULT current_timestamp(),
   PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+-- Table structure for `till_closes`
+-- --------------------------------------------------------
+CREATE TABLE IF NOT EXISTS `till_closes` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `close_date` date NOT NULL,
+  `cash_expected` decimal(10,2) NOT NULL DEFAULT 0.00,
+  `cash_counted` decimal(10,2) NOT NULL DEFAULT 0.00,
+  `momo_expected` decimal(10,2) NOT NULL DEFAULT 0.00,
+  `momo_counted` decimal(10,2) NOT NULL DEFAULT 0.00,
+  `note` varchar(255) DEFAULT NULL,
+  `closed_by` varchar(100) NOT NULL,
+  `closed_at` datetime NOT NULL DEFAULT current_timestamp(),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `close_date` (`close_date`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
@@ -60,6 +79,14 @@ CREATE TABLE IF NOT EXISTS `clients` (
   `client_code` varchar(20) DEFAULT NULL,
   `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
   `status` varchar(20) DEFAULT 'Pending',
+  `service_started_at` datetime DEFAULT NULL,
+  `voided_at` datetime DEFAULT NULL,
+  `void_reason` varchar(255) DEFAULT NULL,
+  `voided_by` varchar(100) DEFAULT NULL,
+  `refund_amount` decimal(10,2) NOT NULL DEFAULT 0.00,
+  `refund_reason` varchar(255) DEFAULT NULL,
+  `refunded_at` datetime DEFAULT NULL,
+  `refunded_by` varchar(100) DEFAULT NULL,
   PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
@@ -215,9 +242,22 @@ CREATE TABLE IF NOT EXISTS `staff` (
   UNIQUE KEY `username` (`username`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
--- Initial default administrator account:
--- Username: admin
--- Default Password: admin123 (Please change upon initial login)
+-- --------------------------------------------------------
+-- Table structure for `password_requests`
+-- --------------------------------------------------------
+CREATE TABLE IF NOT EXISTS `password_requests` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `staff_id` int(11) NOT NULL,
+  `username` varchar(50) NOT NULL,
+  `status` varchar(20) NOT NULL DEFAULT 'pending',
+  `requested_at` datetime NOT NULL DEFAULT current_timestamp(),
+  `resolved_at` datetime DEFAULT NULL,
+  `resolved_by` varchar(100) DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  KEY `staff_status` (`staff_id`, `status`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- Seed administrator. Change this password immediately after install.
 INSERT INTO `staff` (`id`, `name`, `username`, `password`, `role`) VALUES
 (1, 'Administrator', 'admin', '$2y$10$gwZtz4hq6F7iaeX8XzmrZe3CJBlDXTWiw9v.22q16gN0rtDEfMgeK', 'admin');
 

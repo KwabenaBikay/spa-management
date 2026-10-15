@@ -1,44 +1,35 @@
 <?php
-session_start();
+require_once __DIR__ . '/includes/session.php';
 include 'db.php';
 
 $error = '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $username = trim($_POST['username']);
-    $password = trim($_POST['password']);
+    $username = trim($_POST['username'] ?? '');
+    $password = (string)($_POST['password'] ?? '');
 
-    $sql = "SELECT * FROM staff WHERE username = ? LIMIT 1";
-    $stmt = $conn->prepare($sql);
-    $stmt->bind_param("s", $username);
-    $stmt->execute();
-    $result = $stmt->get_result();
-
-    if ($result && $result->num_rows === 1) {
-        $user = $result->fetch_assoc();
-
-        // Prevent admins from using the general login page
-        if ($user['role'] === 'admin') {
-            $error = "Admins must log in via the admin login page.";
-        }
-        // Check password (handles both hashed and plain text)
-        elseif (password_verify($password, $user['password']) || $password === $user['password']) {
-            $_SESSION['user'] = $user;
-            $role = $user['role'];
-
-            if ($role === 'frontdesk' || $role === 'reception') {
-                header("Location: frontdesk/dashboard.php");
-            } elseif ($role === 'admin' || $role === 'supervisor') {
-                header("Location: admin/dashboard.php");
-            } else {
-                header("Location: sections/{$role}.php");
-            }
-            exit;
-        } else {
-            $error = "Invalid password.";
-        }
+    if ($username === '' || $password === '') {
+        $error = 'Invalid username or password.';
+    } elseif (login_is_locked($username)) {
+        $error = 'Too many attempts. Try again in 15 minutes.';
     } else {
-        $error = "User not found.";
+        $stmt = $conn->prepare("SELECT * FROM staff WHERE username = ? LIMIT 1");
+        $stmt->bind_param("s", $username);
+        $stmt->execute();
+        $user = $stmt->get_result()->fetch_assoc();
+
+        if (!$user || !password_verify($password, (string)$user['password'])) {
+            $error = login_failure_text($username);
+        } elseif ($user['role'] === 'admin') {
+            login_clear_failures($username);
+            $error = 'Use the management login page.';
+        } else {
+            login_clear_failures($username);
+            $role = (string)$user['role'];
+            begin_authenticated_session($user);
+            header('Location: ' . home_for_role($role));
+            exit;
+        }
     }
 }
 ?>
@@ -242,6 +233,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 <?php endif; ?>
 
                 <form method="POST" autocomplete="off">
+<?= csrf_field() ?>
                     <div class="form-group">
                         <label for="username">Username</label>
                         <div class="input-container">

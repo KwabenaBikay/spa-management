@@ -1,7 +1,8 @@
-﻿<?php
+<?php
 // API endpoint for deleting a service
 
-session_start();
+require_once __DIR__ . '/../includes/session.php';
+check_api_rate_limit(60, 60);
 header('Content-Type: application/json');
 include '../db.php';
 

@@ -1,9 +1,15 @@
 <?php
+require_once __DIR__ . '/../includes/session.php';
 include '../db.php';
 
+if (!isset($_SESSION['user']) || $_SESSION['user']['role'] !== 'reception') {
+    header("Location: ../login.php");
+    exit;
+}
+
 // Handle delete action
-if (isset($_GET['delete'])) {
-    $id = $_GET['delete'];
+if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && isset($_POST['delete_client'])) {
+    $id = (int)($_POST['client_id'] ?? 0);
     $delete_sql = "DELETE FROM clients WHERE id = ?";
     $stmt = $conn->prepare($delete_sql);
     $stmt->bind_param("i", $id);
@@ -194,7 +200,7 @@ $result = $stmt->get_result();
         </form>
     </div>
 
-    <?php if (isset($message)) echo "<p class='success-msg'>$message</p>"; ?>
+    <?php if (isset($message)) echo "<p class='success-msg'>" . htmlspecialchars($message, ENT_QUOTES, 'UTF-8') . "</p>"; ?>
 
     <div class="table-container">
         <table>
@@ -222,7 +228,12 @@ $result = $stmt->get_result();
                         <td><?= htmlspecialchars($row['client_code']) ?></td>
                         <td>
                             <a href="edit_client.php?id=<?= $row['id'] ?>">Edit</a> |
-                            <a class="btn-danger" href="?delete=<?= $row['id'] ?>" onclick="return confirm('Delete this client?')">Delete</a>
+                            <form method="post" style="display:inline;" onsubmit="return confirm('Delete this client?')">
+                                <?= csrf_field() ?>
+                                <input type="hidden" name="delete_client" value="1">
+                                <input type="hidden" name="client_id" value="<?= (int)$row['id'] ?>">
+                                <button type="submit" class="btn-danger">Delete</button>
+                            </form>
                         </td>
                     </tr>
                 <?php endwhile; ?>

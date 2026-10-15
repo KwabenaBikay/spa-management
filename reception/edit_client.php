@@ -1,5 +1,11 @@
 <?php
+require_once __DIR__ . '/../includes/session.php';
 include '../db.php';
+
+if (!isset($_SESSION['user']) || $_SESSION['user']['role'] !== 'reception') {
+    header("Location: ../login.php");
+    exit;
+}
 
 if (!isset($_GET['id'])) {
     die("Client ID not provided.");
@@ -44,7 +50,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
             // Refresh client info
             $client = array_merge($client, $_POST);
         } else {
-            $error = "Update failed: " . $conn->error;
+            $error = "Update failed. Please try again.";
         }
     }
 }
@@ -130,10 +136,11 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
     <a class="back-btn" href="view_clients.php">← Back</a>
     <h2>Edit Client Details</h2>
 
-    <?php if (isset($success)) echo "<p style='color:lightgreen;'>$success</p>"; ?>
-    <?php if (isset($error)) echo "<p style='color:salmon;'>$error</p>"; ?>
+    <?php if (isset($success)) echo "<p style='color:lightgreen;'>" . htmlspecialchars($success, ENT_QUOTES, 'UTF-8') . "</p>"; ?>
+    <?php if (isset($error)) echo "<p style='color:salmon;'>" . htmlspecialchars($error, ENT_QUOTES, 'UTF-8') . "</p>"; ?>
 
     <form method="post" class="form-grid">
+<?= csrf_field() ?>
         <input type="text" name="name" value="<?= htmlspecialchars($client['name'] ?? '') ?>" required>
         <input type="tel" name="phone" value="<?= htmlspecialchars($client['phone'] ?? '') ?>" required pattern="^[0-9]{10}$" title="Enter exactly 10 digits" maxlength="10" inputmode="numeric">
         <input type="text" name="service_type" value="<?= htmlspecialchars($client['service_type'] ?? '') ?>" required>

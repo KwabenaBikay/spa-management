@@ -1,5 +1,5 @@
 <?php
-session_start();
+require_once __DIR__ . '/../includes/session.php';
 if (!isset($_SESSION['user']) || $_SESSION['user']['role'] !== 'reception') {
     header("Location: ../login.php");
     exit;
@@ -82,8 +82,8 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
     $duration = $_POST['form_type'] === 'massage' ? $_POST['duration'] : null;
     $massage_type = $_POST['form_type'] === 'massage' ? $_POST['massage_type'] : null;
 
-    $sql = "INSERT INTO clients (name, phone, service_type, amount, duration, payment_mode, massage_type, staff_name, section, client_code)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+    $sql = "INSERT INTO clients (name, phone, service_type, amount, duration, payment_mode, massage_type, staff_name, section, client_code, status, service_started_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Pending', NULL)";
     if (empty($error)) {
         $stmt = $conn->prepare($sql);
         $stmt->bind_param("ssssssssss", $name, $phone, $service_type, $amount, $duration, $payment_mode, $massage_type, $staff_name, $section, $client_code);
@@ -114,7 +114,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
               $log->execute();
             }
         } else {
-            $error = "Error: " . $conn->error;
+            $error = "Unable to register the client. Please try again.";
         }
     }
 }
@@ -255,6 +255,7 @@ form button:hover {
 
   <!-- Massage Form -->
   <form method="post" id="massage-form">
+<?= csrf_field() ?>
     <input type="hidden" name="form_type" value="massage">
     <input type="hidden" name="service_type" value="Massage">
     <input type="hidden" name="section" value="Massage">
@@ -279,6 +280,7 @@ form button:hover {
 
   <!-- Other Services Form -->
   <form method="post" id="others-form">
+<?= csrf_field() ?>
     <input type="hidden" name="form_type" value="others">
     <input type="text" name="name" placeholder="Client Name" required>
     <input type="tel" name="phone" placeholder="Phone Number (10 digits)" required pattern="^[0-9]{10}$" title="Enter exactly 10 digits" maxlength="10" inputmode="numeric">

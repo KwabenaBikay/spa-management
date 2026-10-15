@@ -1,58 +1,37 @@
 <?php
-header("Access-Control-Allow-Origin: *");
 header('Content-Type: application/json');
-session_start();
-
+require_once __DIR__ . '/../includes/session.php';
+check_api_rate_limit(120, 60);
 include '../db.php';
+include '../includes/client_timer.php';
 
-// Security check: must be logged in
 if (!isset($_SESSION['user'])) {
     http_response_code(403);
-    echo json_encode(['error' => 'Access denied. Privileged session required.']);
+    echo json_encode(['error' => 'Access denied.']);
     exit;
 }
 
-$role = $_SESSION['user']['role'] ?? '';
-$sections = [];
-
-if ($role === 'massage' || $role === 'therapist') {
-    $sections = ['Massage'];
-} elseif ($role === 'nails') {
-    $sections = ['Nails & Manicure', 'Pedicure & Manicure'];
-} elseif ($role === 'facials') {
-    $sections = ['Facials'];
-} elseif ($role === 'salon') {
-    $sections = ['Hair Salon'];
-} elseif ($role === 'barbering') {
-    $sections = ['Hair Barbering'];
-} else {
-    // Admin, supervisor or frontdesk can specify section as param
-    if (isset($_GET['section'])) {
-        $sections = [$_GET['section']];
-    } else {
-        http_response_code(400);
-        echo json_encode(['error' => 'Invalid role or section parameter missing.']);
-        exit;
-    }
+$role = (string)($_SESSION['user']['role'] ?? '');
+$sections = staff_sections_for_role($role);
+if (!$sections) {
+    http_response_code(403);
+    echo json_encode(['error' => 'This station does not have a floor queue.']);
+    exit;
 }
 
-// Build prepared query dynamically based on count of sections
-$in_clause = implode(',', array_fill(0, count($sections), '?'));
-$stmt = $conn->prepare("SELECT * FROM clients WHERE section IN ($in_clause) ORDER BY created_at DESC");
+ensure_client_timer_schema($conn);
 
-if ($stmt) {
-    $types = str_repeat('s', count($sections));
-    $stmt->bind_param($types, ...$sections);
-    $stmt->execute();
-    $res = $stmt->get_result();
+$queue = filter_clients_for_staff(fetch_section_clients_today($conn, $sections), $_SESSION['user']);
+$stats = floor_stats_from_queue($queue);
 
-    $clients = [];
-    while ($row = $res->fetch_assoc()) {
-        $clients[] = $row;
-    }
-    echo json_encode($clients);
-} else {
-    http_response_code(500);
-    echo json_encode(['error' => 'Database query preparation failed.']);
-}
-?>
+echo json_encode([
+    'queue' => $queue,
+    'server_unix' => time(),
+    'kpis' => [
+        'waiting' => (int)$stats['waiting'],
+        'in_progress' => (int)$stats['in_progress'],
+        'overtime' => (int)$stats['overtime'],
+        'done' => (int)$stats['done'],
+        'mine_waiting' => (int)$stats['waiting'],
+    ],
+]);

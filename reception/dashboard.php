@@ -1,5 +1,5 @@
 <?php
-session_start();
+require_once __DIR__ . '/../includes/session.php';
 include '../db.php';
 
 if (!isset($_SESSION['user']) || $_SESSION['user']['role'] !== 'reception') {

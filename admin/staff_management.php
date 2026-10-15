@@ -1,21 +1,49 @@
 <?php
-session_start();
+require_once __DIR__ . '/../includes/session.php';
 include '../db.php';
 
 // Restrict access to admin and supervisor
 if (!isset($_SESSION['user']) || !in_array($_SESSION['user']['role'], ['admin', 'supervisor'])) {
-    header("Location: ../login.php");
+    header("Location: login.php");
     exit;
 }
 
 $user_role = $_SESSION['user']['role'];
+
+$floor_roles = ['reception', 'massage', 'barbering', 'facials', 'nails', 'salon'];
+$management_roles = ['admin', 'supervisor'];
+$assignable_roles = $user_role === 'admin' ? array_merge($floor_roles, $management_roles) : $floor_roles;
+$role_options = [
+    'admin' => 'System Admin',
+    'supervisor' => 'Supervisor',
+    'reception' => 'Frontdesk Officer',
+    'massage' => 'Massage Therapist',
+    'barbering' => 'Barbering Staff',
+    'facials' => 'Facial Staff',
+    'nails' => 'Nails Tech',
+    'salon' => 'Salon Staff',
+];
 
 // Add new staff
 if (isset($_POST['add_staff'])) {
     $name = trim($_POST['name']);
     $username = trim($_POST['username']);
     $password = $_POST['password'];
-    $role = $_POST['role'];
+    $role = $_POST['role'] ?? '';
+
+    if (!is_password_complex($password, $pwErr)) {
+        $_SESSION['error'] = $pwErr;
+        header("Location: staff_management.php");
+        exit;
+    }
+
+    if (!in_array($role, $assignable_roles, true)) {
+        $_SESSION['error'] = $user_role === 'admin'
+            ? 'Please choose a valid role.'
+            : 'Only an administrator can add Admin or Supervisor accounts.';
+        header("Location: staff_management.php");
+        exit;
+    }
 
     // Check for duplicate username
     $check = $conn->prepare("SELECT id FROM staff WHERE username = ?");
@@ -72,19 +100,30 @@ if (isset($_POST['add_staff'])) {
 
 // Delete staff
 if (isset($_POST['delete_staff'])) {
-    $id = $_POST['staff_id'];
-    if ($id == $_SESSION['user']['id']) {
+    $id = (int)$_POST['staff_id'];
+    $before = null;
+    if ($stmtSel = $conn->prepare("SELECT * FROM staff WHERE id = ?")) {
+        $stmtSel->bind_param('i', $id);
+        $stmtSel->execute();
+        $beforeRes = $stmtSel->get_result();
+        $before = $beforeRes ? $beforeRes->fetch_assoc() : null;
+    }
+
+    if ($id === (int)($_SESSION['user']['id'] ?? 0)) {
         $_SESSION['error'] = "You cannot delete your own account!";
-    } else {
-        // Fetch before snapshot for audit
-        $before = null;
-        if ($stmtSel = $conn->prepare("SELECT * FROM staff WHERE id = ?")) { 
-            $stmtSel->bind_param('i', $id); 
-            $stmtSel->execute(); 
-            $beforeRes = $stmtSel->get_result(); 
-            $before = $beforeRes ? $beforeRes->fetch_assoc() : null; 
+    } elseif (!$before) {
+        $_SESSION['error'] = "Staff record not found.";
+    } elseif ($user_role !== 'admin' && in_array($before['role'], $management_roles, true)) {
+        $_SESSION['error'] = "Only an administrator can remove Admin or Supervisor accounts.";
+    } elseif ($before['role'] === 'admin') {
+        $admin_count = (int)($conn->query("SELECT COUNT(*) FROM staff WHERE role = 'admin'")->fetch_row()[0] ?? 0);
+        if ($admin_count < 2) {
+            $_SESSION['error'] = "Cannot delete the last administrator.";
         }
-        
+    }
+
+    if (empty($_SESSION['error'])) {
+        unset($before['password']);
         $stmt = $conn->prepare("DELETE FROM staff WHERE id = ?");
         $stmt->bind_param("i", $id);
         $stmt->execute();
@@ -159,7 +198,7 @@ unset($_SESSION['message'], $_SESSION['error']);
     .main-content { flex: 1; margin-left: var(--sidebar-width); display: flex; flex-direction: column; min-height: 100vh; }
     .topbar { height: var(--topbar-height); background-color: var(--bg-card); border-bottom: 1px solid var(--border-color); display: flex; align-items: center; justify-content: space-between; padding: 0 30px; position: sticky; top: 0; z-index: 90; }
     .topbar h2 { font-size: 18px; font-weight: 600; color: var(--text-main); }
-    .content-wrapper { padding: 30px; flex: 1; max-width: 1200px; margin: 0 auto; width: 100%;}
+    .content-wrapper { padding: 30px; flex: 1; width: 100%; }
 
     .alert { padding: 15px 20px; border-radius: 2px; margin-bottom: 25px; font-size: 14px; font-weight: 500; display: flex; align-items: center; gap: 10px; border-left: 4px solid; }
     .alert-success { background: #d1fae5; color: #065f46; border-left-color: #10b981; }
@@ -211,6 +250,7 @@ unset($_SESSION['message'], $_SESSION['error']);
         </div>
         <nav class="sidebar-menu">
             <a href="dashboard.php" class="menu-item"><i class="fas fa-square-poll-vertical"></i> Dashboard Overview</a>
+            <a href="password_requests.php" class="menu-item"><i class="fas fa-key"></i> Password Requests</a>
             <a href="staff_management.php" class="menu-item active"><i class="fas fa-users-rectangle"></i> Staff Roster</a>
             <a href="services_management.php" class="menu-item"><i class="fas fa-list-ul"></i> Services & Pricing</a>
             
@@ -219,10 +259,13 @@ unset($_SESSION['message'], $_SESSION['error']);
             <?php endif; ?>
             
             <a href="appointments.php" class="menu-item"><i class="fas fa-calendar-days"></i> Appointments</a>
-            <a href="reports.php" class="menu-item"><i class="fas fa-file-invoice-dollar"></i> Financial Reports</a>
+            <a href="reports.php" class="menu-item"><i class="fas fa-file-invoice-dollar"></i> Reports</a>
+            <a href="till.php" class="menu-item"><i class="fas fa-cash-register"></i> Close of Day</a>
             <a href="clients.php" class="menu-item"><i class="fas fa-address-book"></i> Client Directory</a>
             
             <?php if ($user_role === 'admin'): ?>
+            
+            <a href="backup.php" class="menu-item"><i class="fas fa-database"></i> Database Backup</a>
             <a href="audit_logs.php" class="menu-item"><i class="fas fa-server"></i> System Audit Logs</a>
             <?php endif; ?>
         </nav>
@@ -245,20 +288,18 @@ unset($_SESSION['message'], $_SESSION['error']);
       <div class="flat-card">
         <div class="flat-card-header"><h3>Add New Staff Member</h3></div>
         <form method="post">
+<?= csrf_field() ?>
           <div class="form-row">
             <input type="text" name="name" placeholder="Full Name" class="form-control" required>
             <input type="text" name="username" placeholder="Username" class="form-control" required>
             <input type="password" name="password" placeholder="Password" class="form-control" required>
             <select name="role" class="form-control" required>
               <option value="">Select Role</option>
-              <option value="admin">System Admin</option>
-              <option value="reception">Frontdesk Officer</option>
-              <option value="supervisor">Supervisor</option>
-              <option value="massage">Massage Therapist</option>
-              <option value="barbering">Barbering Staff</option>
-              <option value="facials">Facial Staff</option>
-              <option value="nails">Nails Tech</option>
-              <option value="salon">Salon Staff</option>
+              <?php foreach ($role_options as $value => $label): ?>
+                <?php if (in_array($value, $assignable_roles, true)): ?>
+                <option value="<?= htmlspecialchars($value) ?>"><?= htmlspecialchars($label) ?></option>
+                <?php endif; ?>
+              <?php endforeach; ?>
             </select>
             <button type="submit" name="add_staff" class="btn btn-primary">
               <i class="fas fa-plus"></i> Add Staff
@@ -314,14 +355,22 @@ unset($_SESSION['message'], $_SESSION['error']);
                   <span class="badge <?= $cls ?>"><?= htmlspecialchars($labelText) ?></span>
                 </td>
                 <td>
-                  <a href="edit_staff.php?id=<?= $staff['id'] ?>" class="btn btn-outline btn-sm">Edit</a>
-                  <?php if ($staff['id'] != $_SESSION['user']['id']): ?>
+                  <?php
+                    $is_management = in_array($staff['role'], $management_roles, true);
+                    $is_self = (int)$staff['id'] === (int)$_SESSION['user']['id'];
+                    $can_manage_row = $user_role === 'admin' || !$is_management || $is_self;
+                  ?>
+                  <?php if ($can_manage_row): ?>
+                  <a href="edit_staff.php?id=<?= (int)$staff['id'] ?>" class="btn btn-outline btn-sm">Edit</a>
+                  <?php endif; ?>
+                  <?php if ((int)$staff['id'] === (int)$_SESSION['user']['id']): ?>
+                    <button class="btn btn-outline btn-sm" disabled style="opacity: 0.5;">Current User</button>
+                  <?php elseif ($can_manage_row): ?>
                   <form method="post" style="display:inline;" onsubmit="return confirm('Are you sure you want to delete this staff record?')">
-                    <input type="hidden" name="staff_id" value="<?= $staff['id'] ?>">
+<?= csrf_field() ?>
+                    <input type="hidden" name="staff_id" value="<?= (int)$staff['id'] ?>">
                     <button type="submit" name="delete_staff" class="btn btn-danger btn-sm">Delete</button>
                   </form>
-                  <?php else: ?>
-                    <button class="btn btn-outline btn-sm" disabled style="opacity: 0.5;">Current User</button>
                   <?php endif; ?>
                 </td>
               </tr>

@@ -1,5 +1,5 @@
 ﻿<?php
-session_start();
+require_once __DIR__ . '/../includes/session.php';
 include '../db.php';
 
 if (isset($_SESSION['user']) && isset($_SESSION['user']['role']) && in_array($_SESSION['user']['role'], ['admin', 'supervisor'])) {
@@ -14,24 +14,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $password = trim($_POST['password'] ?? '');
 
     if ($username === '' || $password === '') {
-        $error = 'Please enter both username and password.';
+        $error = 'Invalid username or password.';
+    } elseif (login_is_locked($username)) {
+        $error = 'Too many attempts. Try again in 15 minutes.';
     } else {
         $stmt = $conn->prepare("SELECT * FROM staff WHERE username = ? AND role IN ('admin', 'supervisor') LIMIT 1");
         $stmt->bind_param("s", $username);
         $stmt->execute();
-        $result = $stmt->get_result();
+        $user = $stmt->get_result()->fetch_assoc();
 
-        if ($result && $result->num_rows === 1) {
-            $user = $result->fetch_assoc();
-            if (password_verify($password, $user['password']) || $password === $user['password']) {
-                $_SESSION['user'] = $user;
-                header("Location: dashboard.php");
-                exit;
-            } else {
-                $error = 'Invalid username or password.';
-            }
+        if (!$user || !password_verify($password, (string)$user['password'])) {
+            $error = login_failure_text($username);
         } else {
-            $error = 'Invalid username or password. (Access restricted to Management)';
+            login_clear_failures($username);
+            begin_authenticated_session($user);
+            header("Location: dashboard.php");
+            exit;
         }
     }
 }
@@ -96,6 +94,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             <?php if ($error): ?><div class="error"><?= htmlspecialchars($error) ?></div><?php endif; ?>
             
             <form method="post" action="">
+<?= csrf_field() ?>
                 <div class="input-group">
                     <label>Username</label>
                     <input type="text" name="username" required autofocus>

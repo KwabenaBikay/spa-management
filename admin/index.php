@@ -1,5 +1,5 @@
 <?php
-session_start();
+require_once __DIR__ . '/../includes/session.php';
 
 // Check if the user is already logged in as an admin or manager
 if (isset($_SESSION['user']) && in_array($_SESSION['user']['role'], ['admin', 'supervisor'])) {

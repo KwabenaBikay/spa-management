@@ -1,49 +1,14 @@
 <?php
-session_start();
+require_once __DIR__ . '/includes/session.php';
 include 'db.php';
+include 'includes/password_requests.php';
 
 $error = '';
 $success = '';
-$test_link = ''; // Used for testing without a real mail server
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $username = trim($_POST['username']);
-
-    // 1. Verify the user exists
-    $stmt = $conn->prepare("SELECT id, email FROM staff WHERE username = ? LIMIT 1");
-    $stmt->bind_param("s", $username);
-    $stmt->execute();
-    $result = $stmt->get_result();
-
-    if ($result && $result->num_rows === 1) {
-        $user = $result->fetch_assoc();
-        
-        // 2. Generate secure token and expiry time (30 mins from now)
-        $token = bin2hex(random_bytes(32)); 
-        $expires = date('Y-m-d H:i:s', strtotime('+30 minutes'));
-
-        // 3. Save token to database
-        $update = $conn->prepare("UPDATE staff SET reset_token = ?, reset_expires = ? WHERE id = ?");
-        $update->bind_param("ssi", $token, $expires, $user['id']);
-        $update->execute();
-
-        // 4. Send Email (Simulated for this code)
-        $reset_link = "http://" . $_SERVER['HTTP_HOST'] . dirname($_SERVER['PHP_SELF']) . "/reset_password.php?token=" . $token;
-        
-        /* // REAL EMAIL CODE (Uncomment when on a live server with SMTP):
-        $to = $user['email'];
-        $subject = "Password Reset Request - The Breeze Spa";
-        $message = "Click this link to reset your password (valid for 30 mins):\n\n" . $reset_link;
-        $headers = "From: noreply@thebreezespa.com";
-        mail($to, $subject, $message, $headers);
-        */
-
-        $success = 'If an account matches that username, a reset link has been generated.';
-        $test_link = $reset_link; // Displaying on screen for your local testing
-    } else {
-        // We show the exact same message to prevent "User Enumeration" hacking
-        $success = 'If an account matches that username, a reset link has been generated.';
-    }
+    record_password_request($conn, (string)($_POST['username'] ?? ''));
+    $success = 'Your request has been sent. An administrator will set a new password and give it to you.';
 }
 ?>
 <!DOCTYPE html>
@@ -87,8 +52,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         .footer-link { display:block; margin-top:20px; color:#64748b; text-decoration:none; font-size: 14px; font-weight: 500; }
         .footer-link:hover { color: #0ea5e9; }
 
-        /* Testing block */
-        .test-link-box { margin-top: 20px; padding: 15px; background: #f8fafc; border: 1px dashed #cbd5e1; font-size: 12px; word-wrap: break-word; text-align: left;}
     </style>
 </head>
 <body>
@@ -96,23 +59,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         <div class="login-card">
             <img src="assets/images/The-Breeze-1.png" class="logo" alt="Logo" onerror="this.style.display='none'">
             <h2>Password Recovery</h2>
-            <p>Enter your system username. We will generate a secure reset link for your account.</p>
+            <p>Enter your system username. The administrator will see the request and set a new password for you.</p>
             
             <?php if ($success): ?>
                 <div class="alert alert-success"><?= htmlspecialchars($success) ?></div>
-                <?php if($test_link): ?>
-                    <div class="test-link-box">
-                        <strong>DEVELOPER TEST LINK:</strong><br>
-                        <a href="<?= $test_link ?>"><?= $test_link ?></a>
-                    </div>
-                <?php endif; ?>
             <?php else: ?>
                 <form method="post" action="">
+<?= csrf_field() ?>
                     <div class="input-group">
                         <label>System Username</label>
                         <input type="text" name="username" placeholder="Enter username" required autofocus>
                     </div>
-                    <button type="submit">Generate Reset Link</button>
+                    <button type="submit">Request help</button>
                 </form>
             <?php endif; ?>
             

@@ -1,14 +1,17 @@
 <?php
-session_start();
+require_once __DIR__ . '/../includes/session.php';
 include '../db.php';
 
 // Restrict access to admin and supervisor
 if (!isset($_SESSION['user']) || !in_array($_SESSION['user']['role'], ['admin', 'supervisor'])) {
-    header("Location: ../login.php");
+    header("Location: login.php");
     exit;
 }
 
 $user_role = $_SESSION['user']['role'];
+
+$floor_roles = ['reception', 'massage', 'barbering', 'facials', 'nails', 'salon'];
+$management_roles = ['admin', 'supervisor'];
 
 // Check if staff ID is provided
 if (!isset($_GET['id'])) {
@@ -16,7 +19,7 @@ if (!isset($_GET['id'])) {
     exit;
 }
 
-$staff_id = $_GET['id'];
+$staff_id = (int)$_GET['id'];
 
 // Fetch staff details
 $stmt = $conn->prepare("SELECT * FROM staff WHERE id = ?");
@@ -30,46 +33,83 @@ if ($result->num_rows === 0) {
 }
 
 $staff = $result->fetch_assoc();
+$is_self = $staff_id === (int)($_SESSION['user']['id'] ?? 0);
+
+if ($user_role !== 'admin' && in_array($staff['role'], $management_roles, true) && !$is_self) {
+    $_SESSION['error'] = 'Only an administrator can edit Admin or Supervisor accounts.';
+    header("Location: staff_management.php");
+    exit;
+}
+
+$assignable_roles = $user_role === 'admin'
+    ? array_merge($floor_roles, $management_roles)
+    : ($is_self ? [$staff['role']] : $floor_roles);
+$role_options = [
+    'admin' => 'System Admin',
+    'supervisor' => 'Supervisor',
+    'reception' => 'Frontdesk Officer',
+    'massage' => 'Massage Therapist',
+    'barbering' => 'Barbering Staff',
+    'facials' => 'Facial Staff',
+    'nails' => 'Nails Tech',
+    'salon' => 'Salon Staff',
+];
+
+$error = '';
 
 // Handle form submission
 if ($_SERVER["REQUEST_METHOD"] == "POST") {
     $name = trim($_POST['name']);
     $username = trim($_POST['username']);
-    $role = $_POST['role'];
+    $role = $_POST['role'] ?? '';
     $password = $_POST['password'];
 
-    // Check if username already exists (excluding current staff)
-    $check = $conn->prepare("SELECT id FROM staff WHERE username = ? AND id != ?");
-    $check->bind_param("si", $username, $staff_id);
-    $check->execute();
-    $check_result = $check->get_result();
-
-    if ($check_result->num_rows > 0) {
-        $_SESSION['error'] = "Username already exists!";
-    } else {
-        if (!empty($password)) {
-            // Update with new password
-            $hashed = password_hash($password, PASSWORD_DEFAULT);
-            $stmt = $conn->prepare("UPDATE staff SET name = ?, username = ?, password = ?, role = ? WHERE id = ?");
-            $stmt->bind_param("ssssi", $name, $username, $hashed, $role, $staff_id);
-        } else {
-            // Update without changing password
-            $stmt = $conn->prepare("UPDATE staff SET name = ?, username = ?, role = ? WHERE id = ?");
-            $stmt->bind_param("sssi", $name, $username, $role, $staff_id);
+    if (!in_array($role, $assignable_roles, true)) {
+        $error = $user_role === 'admin'
+            ? 'Please choose a valid role.'
+            : 'Only an administrator can assign Admin or Supervisor roles.';
+    } elseif ($staff['role'] === 'admin' && $role !== 'admin') {
+        $admin_count = (int)($conn->query("SELECT COUNT(*) FROM staff WHERE role = 'admin'")->fetch_row()[0] ?? 0);
+        if ($admin_count < 2) {
+            $error = 'Cannot demote the last administrator.';
         }
-        
-        if ($stmt->execute()) {
-            $_SESSION['message'] = "Staff updated successfully!";
-            header("Location: staff_management.php");
-            exit;
+    }
+
+    if (empty($error)) {
+        $check = $conn->prepare("SELECT id FROM staff WHERE username = ? AND id != ?");
+        $check->bind_param("si", $username, $staff_id);
+        $check->execute();
+        $check_result = $check->get_result();
+
+        if ($check_result->num_rows > 0) {
+            $error = "Username already exists!";
+        } elseif ($password !== '' && !is_password_complex($password, $error)) {
+            // $error set by is_password_complex
         } else {
-            $_SESSION['error'] = "Error updating staff.";
+            if (!empty($password)) {
+                $hashed = password_hash($password, PASSWORD_DEFAULT);
+                $stmt = $conn->prepare("UPDATE staff SET name = ?, username = ?, password = ?, role = ? WHERE id = ?");
+                $stmt->bind_param("ssssi", $name, $username, $hashed, $role, $staff_id);
+            } else {
+                $stmt = $conn->prepare("UPDATE staff SET name = ?, username = ?, role = ? WHERE id = ?");
+                $stmt->bind_param("sssi", $name, $username, $role, $staff_id);
+            }
+
+            if ($stmt->execute()) {
+                $_SESSION['message'] = "Staff updated successfully!";
+                header("Location: staff_management.php");
+                exit;
+            } else {
+                $error = "Error updating staff.";
+            }
         }
     }
 }
 
 $message = $_SESSION['message'] ?? '';
-$error = $_SESSION['error'] ?? '';
+if (empty($error)) {
+    $error = $_SESSION['error'] ?? '';
+}
 unset($_SESSION['message'], $_SESSION['error']);
 ?>
 <!DOCTYPE html>
@@ -154,15 +194,19 @@ unset($_SESSION['message'], $_SESSION['error']);
         <nav class="sidebar-menu">
             <a href="dashboard.php" class="menu-item"><i class="fas fa-square-poll-vertical"></i> Dashboard Overview</a>
             <a href="staff_management.php" class="menu-item active"><i class="fas fa-users-rectangle"></i> Staff Roster</a>
+            <a href="password_requests.php" class="menu-item"><i class="fas fa-key"></i> Password Requests</a>
             <a href="services_management.php" class="menu-item"><i class="fas fa-list-ul"></i> Services & Pricing</a>
             <?php if ($user_role === 'admin' || $user_role === 'supervisor'): ?>
             <a href="massage_management.php" class="menu-item"><i class="fas fa-spa"></i> Massage Categories</a>
             <?php endif; ?>
             <a href="appointments.php" class="menu-item"><i class="fas fa-calendar-days"></i> Appointments</a>
-            <a href="reports.php" class="menu-item"><i class="fas fa-file-invoice-dollar"></i> Financial Reports</a>
+            <a href="reports.php" class="menu-item"><i class="fas fa-file-invoice-dollar"></i> Reports</a>
+            <a href="till.php" class="menu-item"><i class="fas fa-cash-register"></i> Close of Day</a>
             <a href="clients.php" class="menu-item"><i class="fas fa-address-book"></i> Client Directory</a>
             <?php if ($user_role === 'admin'): ?>
-                <a href="audit_logs.php" class="menu-item"><i class="fas fa-server"></i> System Audit Logs</a>
+                
+            <a href="backup.php" class="menu-item"><i class="fas fa-database"></i> Database Backup</a>
+            <a href="audit_logs.php" class="menu-item"><i class="fas fa-server"></i> System Audit Logs</a>
             <?php endif; ?>
         </nav>
         <a href="../logout.php" class="logout-btn"><i class="fas fa-arrow-right-from-bracket"></i> Terminate Session</a>
@@ -190,6 +234,7 @@ unset($_SESSION['message'], $_SESSION['error']);
         <div class="flat-card-header"><h3>Staff Configuration</h3></div>
 
         <form method="post">
+<?= csrf_field() ?>
             <div class="form-group">
                 <label>Full Name</label>
                 <input type="text" name="name" id="name" class="form-control" value="<?= htmlspecialchars($staff['name']) ?>" required>
@@ -204,14 +249,11 @@ unset($_SESSION['message'], $_SESSION['error']);
                 <label>Role / Position</label>
                 <select name="role" id="role" class="form-control" required>
                     <option value="">Select Role</option>
-                    <option value="admin" <?= $staff['role'] === 'admin' ? 'selected' : '' ?>>System Admin</option>
-                    <option value="reception" <?= $staff['role'] === 'reception' ? 'selected' : '' ?>>Frontdesk Officer</option>
-                    <option value="supervisor" <?= $staff['role'] === 'supervisor' ? 'selected' : '' ?>>Supervisor</option>
-                    <option value="massage" <?= $staff['role'] === 'massage' ? 'selected' : '' ?>>Massage Therapist</option>
-                    <option value="barbering" <?= $staff['role'] === 'barbering' ? 'selected' : '' ?>>Barbering Staff</option>
-                    <option value="facials" <?= $staff['role'] === 'facials' ? 'selected' : '' ?>>Facial Staff</option>
-                    <option value="nails" <?= $staff['role'] === 'nails' ? 'selected' : '' ?>>Nails Tech</option>
-                    <option value="salon" <?= $staff['role'] === 'salon' ? 'selected' : '' ?>>Salon Staff</option>
+                    <?php foreach ($role_options as $value => $label): ?>
+                        <?php if (in_array($value, $assignable_roles, true)): ?>
+                        <option value="<?= htmlspecialchars($value) ?>" <?= $staff['role'] === $value ? 'selected' : '' ?>><?= htmlspecialchars($label) ?></option>
+                        <?php endif; ?>
+                    <?php endforeach; ?>
                 </select>
             </div>
 

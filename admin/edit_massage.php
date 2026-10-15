@@ -1,22 +1,22 @@
 <?php
-session_start();
+require_once __DIR__ . '/../includes/session.php';
 include '../db.php';
 
-// Restrict access to admin and supervisor
 if (!isset($_SESSION['user']) || !in_array($_SESSION['user']['role'], ['admin', 'supervisor'])) {
-    header("Location: ../login.php");
+    header("Location: login.php");
     exit;
 }
 
-// Check if massage ID is provided
+$user_role = $_SESSION['user']['role'];
+$massage_categories = ['Full Body Massage', 'Express Massage'];
+
 if (!isset($_GET['id'])) {
     header("Location: massage_management.php");
     exit;
 }
 
-$massage_id = $_GET['id'];
+$massage_id = (int)$_GET['id'];
 
-// Fetch massage details
 $stmt = $conn->prepare("SELECT * FROM massage_types WHERE id = ?");
 $stmt->bind_param("i", $massage_id);
 $stmt->execute();
@@ -29,29 +29,47 @@ if ($result->num_rows === 0) {
 
 $massage = $result->fetch_assoc();
 
-// Handle form submission
-if ($_SERVER["REQUEST_METHOD"] == "POST") {
-    $name = trim($_POST['name']);
-    $price_60 = !empty($_POST['price_60']) ? (float)$_POST['price_60'] : 0.0;
-    $price_90 = !empty($_POST['price_90']) ? (float)$_POST['price_90'] : 0.0;
-    $price_120 = !empty($_POST['price_120']) ? (float)$_POST['price_120'] : 0.0;
-    $category = trim($_POST['category']);
-
-    $stmt = $conn->prepare("UPDATE massage_types SET name = ?, price_60 = ?, price_90 = ?, price_120 = ?, category = ? WHERE id = ?");
-    $stmt->bind_param("sdddsi", $name, $price_60, $price_90, $price_120, $category, $massage_id);
-    
-    if ($stmt->execute()) {
-        $_SESSION['message'] = "Massage type catalog updated successfully.";
-        header("Location: massage_management.php");
-        exit;
-    } else {
-        $_SESSION['error'] = "System error: Unable to update record.";
-    }
+$return_category = trim((string)($_GET['category'] ?? $massage['category'] ?? 'Full Body Massage'));
+if (!in_array($return_category, $massage_categories, true)) {
+    $return_category = in_array((string)($massage['category'] ?? ''), $massage_categories, true)
+        ? $massage['category']
+        : 'Full Body Massage';
 }
 
 $message = $_SESSION['message'] ?? '';
 $error = $_SESSION['error'] ?? '';
 unset($_SESSION['message'], $_SESSION['error']);
+
+if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
+    $name = trim($_POST['name'] ?? '');
+    $price_60 = !empty($_POST['price_60']) ? (float)$_POST['price_60'] : 0.0;
+    $price_90 = !empty($_POST['price_90']) ? (float)$_POST['price_90'] : 0.0;
+    $price_120 = !empty($_POST['price_120']) ? (float)$_POST['price_120'] : 0.0;
+    $category = trim($_POST['category'] ?? '');
+
+    if ($name === '' || !in_array($category, $massage_categories, true)) {
+        $error = 'Please enter a name and choose Full Body or Express.';
+    } else {
+        $stmt = $conn->prepare("UPDATE massage_types SET name = ?, price_60 = ?, price_90 = ?, price_120 = ?, category = ? WHERE id = ?");
+        $stmt->bind_param("sdddsi", $name, $price_60, $price_90, $price_120, $category, $massage_id);
+
+        if ($stmt->execute()) {
+            $_SESSION['message'] = "Massage type catalog updated successfully.";
+            header("Location: massage_management.php?category=" . urlencode($category));
+            exit;
+        }
+        $error = "System error: Unable to update record.";
+        $return_category = $category;
+    }
+
+    $massage['name'] = $name;
+    $massage['price_60'] = $price_60;
+    $massage['price_90'] = $price_90;
+    $massage['price_120'] = $price_120;
+    $massage['category'] = $category;
+}
+
+$catalog_url = 'massage_management.php?category=' . urlencode($return_category);
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -71,6 +89,7 @@ unset($_SESSION['message'], $_SESSION['error']);
             --border-color: #e2e8f0;
             --sidebar-width: 250px;
             --topbar-height: 60px;
+            --danger-color: #dc2626;
         }
 
         * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
@@ -133,12 +152,18 @@ unset($_SESSION['message'], $_SESSION['error']);
         <nav class="sidebar-menu">
             <a href="dashboard.php" class="menu-item"><i class="fas fa-square-poll-vertical"></i> Dashboard</a>
             <a href="staff_management.php" class="menu-item"><i class="fas fa-users-rectangle"></i> Staff Roster</a>
+            <a href="password_requests.php" class="menu-item"><i class="fas fa-key"></i> Password Requests</a>
             <a href="services_management.php" class="menu-item"><i class="fas fa-list-ul"></i> Services & Pricing</a>
             <a href="massage_management.php" class="menu-item active"><i class="fas fa-spa"></i> Massage Categories</a>
             <a href="appointments.php" class="menu-item"><i class="fas fa-calendar-days"></i> Appointments</a>
-            <a href="reports.php" class="menu-item"><i class="fas fa-file-invoice-dollar"></i> Financial Reports</a>
+            <a href="reports.php" class="menu-item"><i class="fas fa-file-invoice-dollar"></i> Reports</a>
+            <a href="till.php" class="menu-item"><i class="fas fa-cash-register"></i> Close of Day</a>
             <a href="clients.php" class="menu-item"><i class="fas fa-address-book"></i> Client Directory</a>
+            <?php if ($user_role === 'admin'): ?>
+            
+            <a href="backup.php" class="menu-item"><i class="fas fa-database"></i> Database Backup</a>
             <a href="audit_logs.php" class="menu-item"><i class="fas fa-server"></i> System Audit Logs</a>
+            <?php endif; ?>
         </nav>
         <a href="../logout.php" class="logout-btn"><i class="fas fa-arrow-right-from-bracket"></i> Terminate Session</a>
     </aside>
@@ -146,7 +171,7 @@ unset($_SESSION['message'], $_SESSION['error']);
     <main class="main-content">
         <header class="topbar">
             <h2>
-                <a href="massage_management.php" class="btn btn-outline btn-sm" style="margin-right: 15px; padding: 6px 14px;"><i class="fas fa-arrow-left"></i> Back</a>
+                <a href="<?= htmlspecialchars($catalog_url) ?>" class="btn btn-outline btn-sm" style="margin-right: 15px; padding: 6px 14px;"><i class="fas fa-arrow-left"></i> Back</a>
                 Modify Massage Catalog
             </h2>
         </header>
@@ -160,6 +185,7 @@ unset($_SESSION['message'], $_SESSION['error']);
                 <div class="flat-card-header"><h3>Massage Configuration</h3></div>
                 
                 <form method="post">
+<?= csrf_field() ?>
                     <div class="form-group">
                         <label>Massage Name</label>
                         <input type="text" name="name" class="form-control" value="<?= htmlspecialchars($massage['name']) ?>" required>
@@ -186,7 +212,7 @@ unset($_SESSION['message'], $_SESSION['error']);
 
                     <div class="action-group">
                         <button type="submit" class="btn btn-primary"><i class="fas fa-save"></i> Save Changes</button>
-                        <a href="massage_management.php" class="btn btn-outline">Cancel</a>
+                        <a href="<?= htmlspecialchars($catalog_url) ?>" class="btn btn-outline">Cancel</a>
                     </div>
                 </form>
             </div>
