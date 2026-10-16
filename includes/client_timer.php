@@ -119,7 +119,12 @@ function floor_stats_from_queue(array $clients): array
 
     $checkins = 0;
     foreach ($clients as $client) {
-        if (!empty($client['voided_at'])) {
+        if (!empty($client['voided_at']) || ($client['status'] ?? '') === 'Cancelled') {
+            continue;
+        }
+        $rawAmount = (float)($client['amount'] ?? 0);
+        $refundAmount = (float)($client['refund_amount'] ?? 0);
+        if ($refundAmount >= $rawAmount && $rawAmount > 0 && ($client['status'] ?? 'Pending') === 'Pending') {
             continue;
         }
         $checkins++;
@@ -311,7 +316,7 @@ function fetch_section_clients_today(mysqli $conn, array $sections): array
     }
     $today = date('Y-m-d');
     $in = implode(',', array_fill(0, count($sections), '?'));
-    $sql = "SELECT * FROM clients WHERE section IN ($in) AND voided_at IS NULL AND (DATE(created_at) = ? OR status = 'In Progress') ORDER BY created_at ASC";
+    $sql = "SELECT * FROM clients WHERE section IN ($in) AND voided_at IS NULL AND status != 'Cancelled' AND NOT (status = 'Pending' AND refund_amount >= amount AND amount > 0) AND (DATE(created_at) = ? OR status = 'In Progress') ORDER BY created_at ASC";
     $stmt = $conn->prepare($sql);
     if (!$stmt) {
         return [];

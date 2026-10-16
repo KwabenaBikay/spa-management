@@ -11,6 +11,11 @@ if (!isset($_SESSION['user']) || !in_array($_SESSION['user']['role'], ['frontdes
 
 ensure_client_timer_schema($conn);
 
+if (handle_client_money_post($conn, true)) {
+    header('Location: dashboard.php');
+    exit;
+}
+
 if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && isset($_POST['mark_reminded'])) {
     $caller = trim((string)($_SESSION['user']['name'] ?? $_SESSION['user']['username'] ?? 'Front desk'));
     mark_appointment_reminded($conn, (int)($_POST['appointment_id'] ?? 0), $caller);
@@ -18,10 +23,14 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && isset($_POST['mark_reminded
     exit;
 }
 
+$message = $_SESSION['message'] ?? '';
+$error = $_SESSION['error'] ?? '';
+unset($_SESSION['message'], $_SESSION['error']);
+
 $today = date('Y-m-d');
 
 $ongoing_services = [];
-$stmt = $conn->prepare("SELECT * FROM clients WHERE DATE(created_at) = ? AND voided_at IS NULL ORDER BY created_at DESC");
+$stmt = $conn->prepare("SELECT * FROM clients WHERE DATE(created_at) = ? AND voided_at IS NULL AND status != 'Cancelled' AND NOT (status = 'Pending' AND refund_amount >= amount AND amount > 0) ORDER BY created_at DESC");
 if ($stmt) {
     $stmt->bind_param("s", $today);
     $stmt->execute();
@@ -34,6 +43,14 @@ if ($stmt) {
 }
 $stats = floor_stats_from_queue($ongoing_services);
 $active_services = sort_queue_for_floor(array_values(array_filter($ongoing_services, static function ($client) {
+    if (!empty($client['voided_at']) || ($client['status'] ?? '') === 'Cancelled') {
+        return false;
+    }
+    $amt = (float)($client['amount'] ?? 0);
+    $ref = (float)($client['refund_amount'] ?? 0);
+    if ($ref >= $amt && $amt > 0 && ($client['status'] ?? 'Pending') === 'Pending') {
+        return false;
+    }
     return ($client['status'] ?? 'Pending') !== 'Done';
 })), 'active');
 $due_today = fetch_due_appointments_today($conn);
@@ -261,6 +278,120 @@ foreach ($due_today as $booking) {
         }
         .btn-print:hover { background: #0ea5e9; color: #ffffff; border-color: #0ea5e9; }
         .countdown-idle { color: var(--text-muted); font-weight: 500; font-size: 12px; }
+        .btn-void {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            padding: 6px 10px;
+            font-size: 12px;
+            font-weight: 600;
+            color: #dc2626;
+            background: #fef2f2;
+            border: 1px solid #fecaca;
+            border-radius: 2px;
+            cursor: pointer;
+            white-space: nowrap;
+        }
+        .btn-void:hover {
+            background: #dc2626;
+            color: #ffffff;
+            border-color: #dc2626;
+        }
+        .actions-cell {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            flex-wrap: nowrap;
+        }
+        .modal-overlay {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(15, 23, 42, 0.65);
+            backdrop-filter: blur(4px);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 9999;
+            padding: 16px;
+        }
+        .modal-card {
+            background: #ffffff;
+            border-radius: 8px;
+            width: 100%;
+            max-width: 460px;
+            box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.2);
+            overflow: hidden;
+            animation: modalFadeIn 0.2s ease-out;
+        }
+        @keyframes modalFadeIn {
+            from { opacity: 0; transform: scale(0.96); }
+            to { opacity: 1; transform: scale(1); }
+        }
+        .modal-header {
+            padding: 16px 20px;
+            background: #f8fafc;
+            border-bottom: 1px solid #e2e8f0;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .modal-header h3 {
+            font-size: 16px;
+            font-weight: 700;
+            color: #1e293b;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin: 0;
+        }
+        .modal-close {
+            background: none;
+            border: none;
+            font-size: 22px;
+            line-height: 1;
+            color: #94a3b8;
+            cursor: pointer;
+        }
+        .modal-close:hover { color: #1e293b; }
+        .modal-body { padding: 20px; }
+        .modal-client-info {
+            background: #f0f9ff;
+            border: 1px solid #bae6fd;
+            border-radius: 6px;
+            padding: 12px 14px;
+            margin-bottom: 16px;
+            font-size: 13px;
+            color: #0369a1;
+        }
+        .modal-client-info p { margin: 4px 0; }
+        .modal-tabs {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 16px;
+            border-bottom: 1px solid #e2e8f0;
+            padding-bottom: 8px;
+        }
+        .modal-tab {
+            flex: 1;
+            padding: 8px 12px;
+            font-size: 13px;
+            font-weight: 600;
+            border: 1px solid #cbd5e1;
+            background: #f8fafc;
+            color: #475569;
+            border-radius: 4px;
+            cursor: pointer;
+            text-align: center;
+        }
+        .modal-tab.active {
+            background: #0ea5e9;
+            color: #ffffff;
+            border-color: #0ea5e9;
+        }
+        .modal-tab.tab-void.active {
+            background: #dc2626;
+            border-color: #dc2626;
+        }
     </style>
 </head>
 <body>
@@ -291,6 +422,16 @@ foreach ($due_today as $booking) {
         </header>
 
         <div class="content-wrapper">
+            <?php if (!empty($message)): ?>
+                <div style="margin-bottom:16px; padding:12px 16px; background:#dcfce7; color:#166534; border:1px solid #bbf7d0; border-radius:4px; font-size:14px; display:flex; align-items:center; gap:8px;">
+                    <i class="fas fa-check-circle"></i> <?= htmlspecialchars($message) ?>
+                </div>
+            <?php endif; ?>
+            <?php if (!empty($error)): ?>
+                <div style="margin-bottom:16px; padding:12px 16px; background:#fef2f2; color:#991b1b; border:1px solid #fecaca; border-radius:4px; font-size:14px; display:flex; align-items:center; gap:8px;">
+                    <i class="fas fa-exclamation-triangle"></i> <?= htmlspecialchars($error) ?>
+                </div>
+            <?php endif; ?>
 
             <div class="kpi-grid">
                 <div class="kpi-card">
@@ -349,7 +490,7 @@ foreach ($due_today as $booking) {
                                     <th>Staff</th>
                                     <th>Status</th>
                                     <th>Time Remaining</th>
-                                    <th>Receipt</th>
+                                    <th>Actions</th>
                                 </tr>
                             </thead>
                             <tbody id="queue-table-body">
@@ -368,6 +509,8 @@ foreach ($due_today as $booking) {
                                     }
                                     $wait_mins = waiting_minutes($client);
                                     $row_class = wait_row_class($wait_mins);
+                                    $netAmt = client_net_amount($client);
+                                    $remAmt = max(0, (float)($client['amount'] ?? 0) - (float)($client['refund_amount'] ?? 0));
                                 ?>
                                 <tr class="<?= htmlspecialchars($row_class) ?>">
                                     <td style="color: var(--text-muted); font-weight: 500;">
@@ -396,9 +539,14 @@ foreach ($due_today as $booking) {
                                     </td>
                                     <td><?= countdown_cell_html($client) ?></td>
                                     <td>
-                                        <a class="btn-print" href="print_receipt.php?id=<?= (int)$client['id'] ?>" target="_blank" rel="noopener">
-                                            <i class="fas fa-print"></i> Print
-                                        </a>
+                                        <div class="actions-cell">
+                                            <a class="btn-print" href="print_receipt.php?id=<?= (int)$client['id'] ?>" target="_blank" rel="noopener">
+                                                <i class="fas fa-print"></i> Print
+                                            </a>
+                                            <button type="button" class="btn-void" data-id="<?= (int)$client['id'] ?>" data-name="<?= htmlspecialchars($client['name'] ?? '', ENT_QUOTES) ?>" data-code="<?= htmlspecialchars($client['client_code'] ?? '', ENT_QUOTES) ?>" data-net="<?= number_format($netAmt, 2, '.', '') ?>" data-rem="<?= number_format($remAmt, 2, '.', '') ?>" onclick="openAdjustModalFromBtn(this)">
+                                                <i class="fas fa-ban"></i> Void / Refund
+                                            </button>
+                                        </div>
                                     </td>
                                 </tr>
                                 <?php endforeach; ?>
@@ -770,6 +918,11 @@ foreach ($due_today as $booking) {
                 : `<span class="wait-note" data-created-unix="${created}">${mins} min wait</span>`;
             const phone = (client.phone || '').trim();
 
+            const totalAmt = parseFloat(client.amount) || 0;
+            const refAmt = parseFloat(client.refund_amount) || 0;
+            const netAmount = Math.max(0, totalAmt - refAmt);
+            const remainingAmount = netAmount;
+
             return `
                 <tr class="${waitRowClass(mins)}">
                     <td style="color: var(--text-muted); font-weight: 500;">${escapeHtml(timeStr)}${waitHtml}</td>
@@ -791,9 +944,14 @@ foreach ($due_today as $booking) {
                     </td>
                     <td>${countdownCellHtml(client)}</td>
                     <td>
-                        <a class="btn-print" href="print_receipt.php?id=${clientId}" target="_blank" rel="noopener">
-                            <i class="fas fa-print"></i> Print
-                        </a>
+                        <div class="actions-cell">
+                            <a class="btn-print" href="print_receipt.php?id=${clientId}" target="_blank" rel="noopener">
+                                <i class="fas fa-print"></i> Print
+                            </a>
+                            <button type="button" class="btn-void" data-id="${clientId}" data-name="${escapeHtml(client.name || '')}" data-code="${escapeHtml(client.client_code || '')}" data-net="${netAmount.toFixed(2)}" data-rem="${remainingAmount.toFixed(2)}" onclick="openAdjustModalFromBtn(this)">
+                                <i class="fas fa-ban"></i> Void / Refund
+                            </button>
+                        </div>
                     </td>
                 </tr>
             `;
@@ -802,7 +960,14 @@ foreach ($due_today as $booking) {
         function renderQueue(queue) {
             const tbody = document.getElementById('queue-table-body');
             if (!tbody) return;
-            const all = queue || [];
+            const raw = queue || [];
+            const all = raw.filter(client => {
+                if (client.voided_at || client.status === 'Cancelled') return false;
+                const amt = parseFloat(client.amount) || 0;
+                const ref = parseFloat(client.refund_amount) || 0;
+                if (ref >= amt && amt > 0 && (client.status || 'Pending') === 'Pending') return false;
+                return true;
+            });
             if (all.length === 0 && !queueQuery) {
                 tbody.innerHTML = `<tr><td colspan="8" style="text-align: center; color: var(--text-muted); padding: 30px;">No clients registered today.</td></tr>`;
                 return;
@@ -1032,10 +1197,184 @@ foreach ($due_today as $booking) {
             });
         }
 
+        function openAdjustModalFromBtn(btn) {
+            const id = btn.dataset.id;
+            const name = btn.dataset.name || '';
+            const code = btn.dataset.code || '';
+            const net = parseFloat(btn.dataset.net) || 0;
+            const rem = parseFloat(btn.dataset.rem) || 0;
+            openAdjustModal(id, name, code, net, rem);
+        }
+
+        function openAdjustModal(clientId, clientName, clientCode, netAmount, remainingAmount) {
+            const nameEl = document.getElementById('modal-client-name');
+            const codeEl = document.getElementById('modal-client-code');
+            const netEl = document.getElementById('modal-net-amount');
+            if (nameEl) nameEl.textContent = clientName;
+            if (codeEl) codeEl.textContent = clientCode;
+            if (netEl) netEl.textContent = Number(netAmount).toFixed(2);
+
+            const voidId = document.getElementById('modal-void-client-id');
+            const refundId = document.getElementById('modal-refund-client-id');
+            if (voidId) voidId.value = clientId;
+            if (refundId) refundId.value = clientId;
+
+            const refundInput = document.getElementById('modal-refund-amount');
+            const maxVal = Math.max(0, Number(remainingAmount));
+            if (refundInput) {
+                refundInput.value = maxVal > 0 ? maxVal.toFixed(2) : '0.00';
+                refundInput.max = maxVal.toFixed(2);
+            }
+
+            const maxNote = document.getElementById('refund-max-note');
+            if (maxNote) {
+                maxNote.textContent = 'Maximum refundable: GHS ' + maxVal.toFixed(2);
+            }
+
+            switchAdjustTab('void');
+
+            const modal = document.getElementById('adjust-modal');
+            if (modal) {
+                modal.style.display = 'flex';
+                const firstInput = modal.querySelector('#form-void input[name="reason"]');
+                if (firstInput) {
+                    setTimeout(() => firstInput.focus(), 50);
+                }
+            }
+        }
+
+        function closeAdjustModal() {
+            const modal = document.getElementById('adjust-modal');
+            if (modal) {
+                modal.style.display = 'none';
+            }
+        }
+
+        function switchAdjustTab(tab) {
+            const formVoid = document.getElementById('form-void');
+            const formRefund = document.getElementById('form-refund');
+            const btnVoid = document.getElementById('tab-btn-void');
+            const btnRefund = document.getElementById('tab-btn-refund');
+
+            if (tab === 'void') {
+                if (formVoid) formVoid.style.display = 'block';
+                if (formRefund) formRefund.style.display = 'none';
+                if (btnVoid) btnVoid.classList.add('active');
+                if (btnRefund) btnRefund.classList.remove('active');
+            } else {
+                if (formVoid) formVoid.style.display = 'none';
+                if (formRefund) formRefund.style.display = 'block';
+                if (btnVoid) btnVoid.classList.remove('active');
+                if (btnRefund) btnRefund.classList.add('active');
+                const refundInput = document.getElementById('modal-refund-amount');
+                if (refundInput) {
+                    setTimeout(() => refundInput.focus(), 50);
+                }
+            }
+        }
+
+        window.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') {
+                closeAdjustModal();
+            }
+        });
+
+        document.addEventListener('DOMContentLoaded', function() {
+            const modalEl = document.getElementById('adjust-modal');
+            if (modalEl) {
+                modalEl.addEventListener('click', function(e) {
+                    if (e.target === modalEl) {
+                        closeAdjustModal();
+                    }
+                });
+            }
+        });
+
         tickCountdowns();
         setInterval(tickCountdowns, 1000);
         setInterval(pollQueueStatus, 5000);
     </script>
+
+    <!-- Void / Refund Modal -->
+    <div id="adjust-modal" class="modal-overlay" style="display: none;">
+        <div class="modal-card">
+            <div class="modal-header">
+                <h3><i class="fas fa-undo-alt"></i> Adjust Visit (Void / Refund)</h3>
+                <button type="button" class="modal-close" onclick="closeAdjustModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="modal-client-info">
+                    <p style="margin:0 0 4px 0;"><strong>Client:</strong> <span id="modal-client-name">—</span> (<code id="modal-client-code">—</code>)</p>
+                    <p style="margin:0;"><strong>Current Net Amount:</strong> GHS <span id="modal-net-amount">0.00</span></p>
+                </div>
+
+                <div class="modal-tabs">
+                    <button type="button" class="modal-tab tab-void active" id="tab-btn-void" onclick="switchAdjustTab('void')">
+                        <i class="fas fa-ban"></i> Void (Cancel Visit)
+                    </button>
+                    <button type="button" class="modal-tab tab-refund" id="tab-btn-refund" onclick="switchAdjustTab('refund')">
+                        <i class="fas fa-receipt"></i> Refund Money
+                    </button>
+                </div>
+
+                <!-- Void Form -->
+                <form method="post" id="form-void" style="display: block;">
+                    <?= csrf_field() ?>
+                    <input type="hidden" name="void_client" value="1">
+                    <input type="hidden" name="client_id" id="modal-void-client-id" value="">
+                    
+                    <div style="margin-bottom: 14px;">
+                        <label style="display: block; font-size: 13px; font-weight: 600; margin-bottom: 6px; color: #334155;">Reason for Void <span style="color:#dc2626;">*</span></label>
+                        <input type="text" name="reason" id="modal-void-reason" placeholder="e.g. Left before service started" required
+                               style="width: 100%; box-sizing: border-box; padding: 8px 12px; border: 1px solid #cbd5e1; border-radius: 4px; font-size: 13px;">
+                        <span style="display: block; font-size: 11px; color: #64748b; margin-top: 4px;">
+                            Voiding cancels the service entirely and removes the client from today's active queue.
+                        </span>
+                    </div>
+
+                    <div style="display: flex; gap: 8px; justify-content: flex-end; margin-top: 20px;">
+                        <button type="button" onclick="closeAdjustModal()" style="padding: 8px 14px; font-size: 13px; font-weight: 600; border: 1px solid #cbd5e1; background: #f8fafc; color: #475569; border-radius: 4px; cursor: pointer;">Cancel</button>
+                        <button type="submit" onclick="return confirm('Are you sure you want to void this visit? This will cancel the ticket and remove it from the till.');" style="padding: 8px 16px; font-size: 13px; font-weight: 600; border: none; background: #dc2626; color: #ffffff; border-radius: 4px; cursor: pointer;">
+                            <i class="fas fa-ban"></i> Confirm Void
+                        </button>
+                    </div>
+                </form>
+
+                <!-- Refund Form -->
+                <form method="post" id="form-refund" style="display: none;">
+                    <?= csrf_field() ?>
+                    <input type="hidden" name="refund_client" value="1">
+                    <input type="hidden" name="client_id" id="modal-refund-client-id" value="">
+
+                    <div style="margin-bottom: 14px;">
+                        <label style="display: block; font-size: 13px; font-weight: 600; margin-bottom: 6px; color: #334155;">Refund Amount (GHS) <span style="color:#dc2626;">*</span></label>
+                        <input type="number" step="0.01" min="0.01" name="refund_amount" id="modal-refund-amount" required
+                               style="width: 100%; box-sizing: border-box; padding: 8px 12px; border: 1px solid #cbd5e1; border-radius: 4px; font-size: 13px;">
+                        <span style="display: block; font-size: 11px; color: #64748b; margin-top: 4px;" id="refund-max-note">
+                            Maximum refundable: GHS 0.00
+                        </span>
+                    </div>
+
+                    <div style="margin-bottom: 14px;">
+                        <label style="display: block; font-size: 13px; font-weight: 600; margin-bottom: 6px; color: #334155;">Reason for Refund <span style="color:#dc2626;">*</span></label>
+                        <input type="text" name="reason" id="modal-refund-reason" placeholder="e.g. Client had an emergency and left" required
+                               style="width: 100%; box-sizing: border-box; padding: 8px 12px; border: 1px solid #cbd5e1; border-radius: 4px; font-size: 13px;">
+                        <span style="display: block; font-size: 11px; color: #64748b; margin-top: 4px;">
+                            Refunding 100% of an uncompleted visit will automatically cancel the ticket and remove it from today's queue.
+                        </span>
+                    </div>
+
+                    <div style="display: flex; gap: 8px; justify-content: flex-end; margin-top: 20px;">
+                        <button type="button" onclick="closeAdjustModal()" style="padding: 8px 14px; font-size: 13px; font-weight: 600; border: 1px solid #cbd5e1; background: #f8fafc; color: #475569; border-radius: 4px; cursor: pointer;">Cancel</button>
+                        <button type="submit" onclick="return confirm('Process this refund?');" style="padding: 8px 16px; font-size: 13px; font-weight: 600; border: none; background: #0284c7; color: #ffffff; border-radius: 4px; cursor: pointer;">
+                            <i class="fas fa-check"></i> Process Refund
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
     <div id="toast-container"></div>
 </body>
 </html>

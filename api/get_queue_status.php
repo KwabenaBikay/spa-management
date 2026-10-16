@@ -19,7 +19,7 @@ ensure_client_timer_schema($conn);
 $today = date('Y-m-d');
 
 $ongoing_services = [];
-$stmt = $conn->prepare("SELECT * FROM clients WHERE DATE(created_at) = ? ORDER BY created_at DESC");
+$stmt = $conn->prepare("SELECT * FROM clients WHERE DATE(created_at) = ? AND voided_at IS NULL AND status != 'Cancelled' AND NOT (status = 'Pending' AND refund_amount >= amount AND amount > 0) ORDER BY created_at DESC");
 if ($stmt) {
     $stmt->bind_param("s", $today);
     $stmt->execute();

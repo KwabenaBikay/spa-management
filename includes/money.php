@@ -113,7 +113,7 @@ function void_client_visit(mysqli $conn, int $id, string $reason, bool $todayOnl
         }
     }
     $actor = money_actor_name();
-    $stmt = $conn->prepare('UPDATE clients SET voided_at = NOW(), void_reason = ?, voided_by = ? WHERE id = ? AND voided_at IS NULL');
+    $stmt = $conn->prepare("UPDATE clients SET voided_at = NOW(), void_reason = ?, voided_by = ?, status = 'Cancelled' WHERE id = ? AND voided_at IS NULL");
     if (!$stmt) {
         return 'The void could not be saved.';
     }
@@ -155,7 +155,14 @@ function refund_client_visit(mysqli $conn, int $id, float $amount, string $reaso
     }
     $actor = money_actor_name();
     $newRefund = round($already + $amount, 2);
-    $stmt = $conn->prepare('UPDATE clients SET refund_amount = ?, refund_reason = ?, refunded_at = NOW(), refunded_by = ? WHERE id = ? AND voided_at IS NULL');
+    $totalAmount = (float)($visit['amount'] ?? 0);
+    $isFullRefund = ($newRefund >= $totalAmount - 0.009);
+
+    if ($isFullRefund && ($visit['status'] ?? '') !== 'Done') {
+        $stmt = $conn->prepare("UPDATE clients SET refund_amount = ?, refund_reason = ?, refunded_at = NOW(), refunded_by = ?, status = 'Cancelled' WHERE id = ? AND voided_at IS NULL");
+    } else {
+        $stmt = $conn->prepare('UPDATE clients SET refund_amount = ?, refund_reason = ?, refunded_at = NOW(), refunded_by = ? WHERE id = ? AND voided_at IS NULL');
+    }
     if (!$stmt) {
         return 'The refund could not be saved.';
     }
