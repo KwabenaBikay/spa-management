@@ -77,18 +77,32 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
     $payment_mode = $_POST['payment_mode'];
     $staff_name = $_POST['staff_name'];
     $section = $_POST['section'];
-    $client_code = "CL-" . rand(10000, 99999);
-
     $duration = $_POST['form_type'] === 'massage' ? $_POST['duration'] : null;
     $massage_type = $_POST['form_type'] === 'massage' ? $_POST['massage_type'] : null;
 
-    $sql = "INSERT INTO clients (name, phone, service_type, amount, duration, payment_mode, massage_type, staff_name, section, client_code, status, service_started_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Pending', NULL)";
     if (empty($error)) {
-        $stmt = $conn->prepare($sql);
-        $stmt->bind_param("ssssssssss", $name, $phone, $service_type, $amount, $duration, $payment_mode, $massage_type, $staff_name, $section, $client_code);
-        if ($stmt->execute()) {
-            $inserted_id = $conn->insert_id;
+        $inserted_id = 0;
+        $client_code = '';
+        $maxAttempts = 5;
+
+        for ($attempt = 1; $attempt <= $maxAttempts; $attempt++) {
+            $client_code = generate_next_client_code($conn);
+            $stmt = $conn->prepare("INSERT INTO clients (name, phone, service_type, amount, duration, payment_mode, massage_type, staff_name, section, client_code, status, service_started_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Pending', NULL)");
+            $stmt->bind_param("ssssssssss", $name, $phone, $service_type, $amount, $duration, $payment_mode, $massage_type, $staff_name, $section, $client_code);
+            if ($stmt->execute()) {
+                $inserted_id = $conn->insert_id;
+                break;
+            }
+
+            if ($conn->errno === 1062) {
+                usleep(30000);
+                continue;
+            }
+
+            break;
+        }
+
+        if ($inserted_id > 0) {
             $success = "Client added! Code: $client_code";
             // Audit log create
             $after = [

@@ -70,16 +70,33 @@ if ($request_method == "POST") {
     $amount = (float)$_POST['amount'];
     $payment_mode = $_POST['payment_mode'];
     $section = $_POST['section'];
-    $client_code = "CL-" . rand(10000, 99999);
     $duration = $_POST['form_type'] === 'massage' ? $_POST['duration'] : null;
     $massage_type = $_POST['form_type'] === 'massage' ? $_POST['massage_type'] : null;
 
     if (empty($error)) {
-        $stmt = $conn->prepare("INSERT INTO clients (name, phone, service_type, amount, duration, payment_mode, massage_type, staff_name, section, client_code, status, service_started_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Pending', NULL)");
-        $stmt->bind_param("ssssssssss", $name, $phone, $service_type, $amount, $duration, $payment_mode, $massage_type, $staff_name, $section, $client_code);
-        
-        if ($stmt->execute()) {
-            $inserted_id = $conn->insert_id;
+        $inserted_id = 0;
+        $client_code = '';
+        $maxAttempts = 5;
+
+        for ($attempt = 1; $attempt <= $maxAttempts; $attempt++) {
+            $client_code = generate_next_client_code($conn);
+            $stmt = $conn->prepare("INSERT INTO clients (name, phone, service_type, amount, duration, payment_mode, massage_type, staff_name, section, client_code, status, service_started_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Pending', NULL)");
+            $stmt->bind_param("ssssssssss", $name, $phone, $service_type, $amount, $duration, $payment_mode, $massage_type, $staff_name, $section, $client_code);
+            
+            if ($stmt->execute()) {
+                $inserted_id = $conn->insert_id;
+                break;
+            }
+
+            if ($conn->errno === 1062) {
+                usleep(30000);
+                continue;
+            }
+
+            break;
+        }
+
+        if ($inserted_id > 0) {
             $registered_code = $client_code;
             $success = "Registration Successful! Code: $client_code";
             

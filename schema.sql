@@ -87,7 +87,8 @@ CREATE TABLE IF NOT EXISTS `clients` (
   `refund_reason` varchar(255) DEFAULT NULL,
   `refunded_at` datetime DEFAULT NULL,
   `refunded_by` varchar(100) DEFAULT NULL,
-  PRIMARY KEY (`id`)
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `idx_client_code` (`client_code`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------

@@ -53,3 +53,6 @@ if (session_status() === PHP_SESSION_ACTIVE && isset($_SESSION['user']) && is_ar
 
 require_once __DIR__ . '/includes/money.php';
 ensure_money_schema($conn);
+
+require_once __DIR__ . '/includes/client_code.php';
+ensure_client_code_schema($conn);
